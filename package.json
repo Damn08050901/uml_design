@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "elkjs": "^0.11.1",
     "file-saver": "^2.0.5",
     "html-to-image": "^1.11.13",
     "vue": "^3.5.30"

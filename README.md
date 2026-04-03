@@ -1,6 +1,132 @@
-# Vue 3 + Vite
+# 论文图表工具（ER + UML）
 
-This template should help get you started developing with Vue 3 in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+用于毕业论文配图的前端工具，支持：
+- ER图（SQL自动解析）
+- UML用例图（论文风格排版）
+- 独立UML页面：类图、时序图、流程图、部署图、架构图、功能结构图
 
-Learn more about IDE Support for Vue in the [Vue Docs Scaling up Guide](https://vuejs.org/guide/scaling-up/tooling.html#ide-support).
-![alt text](image.png)
+## 运行
+
+```bash
+npm install
+npm run dev
+```
+
+构建：
+
+```bash
+npm run build
+```
+
+## 功能总览
+
+1. `ER图`
+- 输入 `CREATE TABLE` 语句自动解析
+- 支持美化排版、主题切换、导出 `PNG/JPEG/SVG/Draw.io`
+
+2. `用例图`
+- 支持文本解析、手工编辑、关系管理（association/include/extend/generalization）
+- 排版按论文插图优化：主用例单列、include/extend分列、黑白学术主题
+- 支持导出 `PNG/JPEG/SVG`
+
+3. `独立UML页面`
+- 每一类图都和ER图、用例图一样，拥有独立页面与独立模块
+- 当前包含：
+  - `类图`
+  - `时序图`
+  - `流程图`
+  - `部署图`
+  - `架构图`
+  - `功能结构图`
+- 每页都支持论文图注辅助：`图X-Y 图名` 一键复制
+- 每页都支持 `draw.io` 原生可编辑画布
+- 每页都支持导出 `PNG/JPEG/SVG/Draw.io`
+- 每页都支持 AI 生成当前图类型的 DSL 文本，再一键同步到画布
+
+## UML页面输入格式
+
+### 1) 类图
+
+每行一个类：`类名|属性1,属性2|方法1(),方法2()`
+
+关系行示例：
+- `用户 -> 订单 : 下单`
+- `订单 *-- 订单明细 : 组合`
+- `子类 <|-- 父类`
+
+### 2) 时序图
+
+```text
+actor 用户
+participant 前端
+participant 后端
+database 数据库
+用户->前端: 提交请求
+前端->后端: 调用接口
+后端-->前端: 返回结果
+```
+
+支持 `alt / else / end` 分支结构，也支持 `database/control/entity/boundary` 参与者类型。
+
+### 3) 流程图
+
+```text
+(开始) -> /录入信息/
+/录入信息/ -> {是否完整?}
+{是否完整?} ->|否| [提示补全]
+{是否完整?} ->|是| [(业务数据表)]
+[(业务数据表)] -> (结束)
+```
+
+支持标准符号：
+- `(开始)` / `(结束)`：终止框
+- `{条件?}`：判断框
+- `/输入输出/`：输入输出框
+- `[(数据库)]`：数据存储
+- `((A))`：连接符
+- `[[子流程]]`：子流程
+
+### 4) 部署图
+
+```text
+客户端: 浏览器,管理端Web
+应用服务器: Nginx,SpringBoot
+数据库服务器: MySQL8.0
+客户端 -> 应用服务器 : HTTPS
+应用服务器 -> 数据库服务器 : JDBC
+```
+
+### 5) 架构图
+
+```text
+表现层: Web前端,管理端
+业务层: 用户服务,订单服务
+数据层: MySQL,Redis
+Web前端 -> 用户服务
+用户服务 -> MySQL
+```
+
+### 6) 功能结构图
+
+```text
+系统: 用户端,管理端
+用户端: 首页浏览,业务办理
+管理端: 用户管理,统计分析
+```
+
+默认按父子树居中排版，适合论文中的功能模块结构图。
+
+## 新版 UML 画布能力
+
+- 左侧继续保留 DSL 文本编辑、图注、模板恢复
+- 右侧升级为 `draw.io` 原生嵌入画布，可直接拖拽、缩放、分组、改连线
+- 类图、流程图、部署图、功能结构图等初始排版会先做自动布局，再进入画布微调
+- AI 面板内置 `LongCat` / `GLM-4.7` 预设，密钥只保存在浏览器本地
+
+## 建议论文用法
+
+- 用例图、类图、流程图、部署图统一使用黑白学术风格
+- 导出 `SVG` 作为论文主图源文件，`PNG` 用于快速粘贴
+- 图注使用 `图X-Y 名称`，先在正文中引用，再插图
+- ER图、用例图、各独立UML页面均支持图注参数（章节/序号/标题）与一键复制图注
+- 导出文件名自动按图注编号命名，例如 `fig3-1-系统用例图.png`
