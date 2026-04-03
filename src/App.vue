@@ -4,14 +4,20 @@ import { parseSQL } from './utils/sqlParser.js'
 import { layoutAll, layoutBeautify } from './utils/erLayout.js'
 import ErDiagram from './components/ErDiagram.vue'
 import UseCasePage from './components/UseCasePage.vue'
+import ClassDiagramPage from './components/ClassDiagramPage.vue'
+import SequenceDiagramPage from './components/SequenceDiagramPage.vue'
+import FlowDiagramPage from './components/FlowDiagramPage.vue'
+import DeploymentDiagramPage from './components/DeploymentDiagramPage.vue'
+import ArchitectureDiagramPage from './components/ArchitectureDiagramPage.vue'
+import FunctionStructurePage from './components/FunctionStructurePage.vue'
 import { toPng, toSvg, toJpeg } from 'html-to-image'
 import { saveAs } from 'file-saver'
 import { detectRelations } from './utils/aiRelation.js'
 import { toDrawioXml } from './utils/drawioExport.js'
 import { autoFillComments } from './utils/autoTranslate.js'
 
-// ─── 模式切换：ER图 / 用例图 ───
-const appMode = ref('er') // 'er' | 'usecase'
+// ─── 模式切换：ER图 / 用例图 / 各类UML图 ───
+const appMode = ref('er')
 
 // ─── 主题配置 ───────────────────────────────────────────────
 const THEMES = {
@@ -70,12 +76,37 @@ const styleConfig = ref({ entityW: 120, entityH: 40, attrRx: 50, attrRy: 20, fon
 const showThemePanel = ref(false)
 const showStylePanel = ref(false)
 const showExportMenu = ref(false)
+const erChapter = ref(3)
+const erFigure = ref(1)
+const erCaptionTitle = ref('系统E-R图')
 
 // 通知
 const toast = ref({ show: false, msg: '', type: 'success' })
 function showToast(msg, type = 'success') {
   toast.value = { show: true, msg, type }
   setTimeout(() => { toast.value.show = false }, 2500)
+}
+
+function buildErCaption() {
+  const title = erCaptionTitle.value.trim() || '系统E-R图'
+  return `图${erChapter.value}-${erFigure.value} ${title}`
+}
+
+function erBaseName() {
+  const title = (erCaptionTitle.value.trim() || '系统E-R图')
+    .replace(/\s+/g, '')
+    .replace(/[\\/:*?"<>|]/g, '')
+  return `fig${erChapter.value}-${erFigure.value}-${title}`
+}
+
+async function copyErCaption() {
+  const text = buildErCaption()
+  try {
+    await navigator.clipboard.writeText(text)
+    showToast('图注已复制')
+  } catch {
+    showToast('复制失败，请手动复制图注', 'warn')
+  }
 }
 
 function generate() {
@@ -196,21 +227,22 @@ async function exportImg(type) {
   showExportMenu.value = false
   const svgEl = erRef.value?.svgEl
   if (!svgEl) return
+  const filename = erBaseName()
   try {
     if (type === 'png') {
       const url = await toPng(svgEl, { backgroundColor: THEMES[currentThemeName.value].entity === '#1e293b' ? '#0f172a' : '#fff', pixelRatio: 2 })
-      saveAs(url, 'er-diagram.png')
+      saveAs(url, `${filename}.png`)
     } else if (type === 'jpeg') {
       const url = await toJpeg(svgEl, { backgroundColor: '#fff', pixelRatio: 2 })
-      saveAs(url, 'er-diagram.jpg')
+      saveAs(url, `${filename}.jpg`)
     } else if (type === 'svg') {
       const url = await toSvg(svgEl, { backgroundColor: '#fff' })
       const res = await fetch(url)
-      saveAs(await res.blob(), 'er-diagram.svg')
+      saveAs(await res.blob(), `${filename}.svg`)
     } else if (type === 'drawio') {
       const nodes = erRef.value?.local || erNodes.value
       const xml = toDrawioXml(nodes, erRef.value?.localEdges || erEdges.value)
-      saveAs(new Blob([xml], { type: 'application/xml' }), 'er-diagram.drawio')
+      saveAs(new Blob([xml], { type: 'application/xml' }), `${filename}.drawio`)
     } else if (type === 'drawio-open') {
       const nodes = erRef.value?.local || erNodes.value
       const xml = toDrawioXml(nodes, erRef.value?.localEdges || erEdges.value)
@@ -240,6 +272,12 @@ function closeAll() {
       <div class="mode-tabs">
         <button class="mode-tab" :class="{active: appMode==='er'}" @click="appMode='er'">📊 ER图</button>
         <button class="mode-tab" :class="{active: appMode==='usecase'}" @click="appMode='usecase'">👤 用例图</button>
+        <button class="mode-tab" :class="{active: appMode==='class'}" @click="appMode='class'">🏷 类图</button>
+        <button class="mode-tab" :class="{active: appMode==='sequence'}" @click="appMode='sequence'">⏱ 时序图</button>
+        <button class="mode-tab" :class="{active: appMode==='flow'}" @click="appMode='flow'">🔀 流程图</button>
+        <button class="mode-tab" :class="{active: appMode==='deployment'}" @click="appMode='deployment'">🖥 部署图</button>
+        <button class="mode-tab" :class="{active: appMode==='architecture'}" @click="appMode='architecture'">🏗 架构图</button>
+        <button class="mode-tab" :class="{active: appMode==='function'}" @click="appMode='function'">🧱 功能结构图</button>
       </div>
       <div class="header-stats" v-if="parsed && appMode==='er'">
         <span class="stat-badge">{{ tableCount }} 张表</span>
@@ -249,6 +287,12 @@ function closeAll() {
 
     <!-- 用例图模式 -->
     <UseCasePage v-if="appMode==='usecase'" />
+    <ClassDiagramPage v-if="appMode==='class'" />
+    <SequenceDiagramPage v-if="appMode==='sequence'" />
+    <FlowDiagramPage v-if="appMode==='flow'" />
+    <DeploymentDiagramPage v-if="appMode==='deployment'" />
+    <ArchitectureDiagramPage v-if="appMode==='architecture'" />
+    <FunctionStructurePage v-if="appMode==='function'" />
 
     <!-- ER图模式：主体左右分栏 -->
     <div class="main" v-if="appMode==='er'" @click.stop>
@@ -292,23 +336,16 @@ function closeAll() {
           <div class="toolbar-left">
             <span class="icon">🖼</span>
             <span class="toolbar-title">ER 图预览</span>
-            <span class="toolbar-hint">节点可拖拽、双击文本可编辑、滚轮缩放</span>
+            <span class="toolbar-hint">论文标准黑白风格，节点可拖拽、双击文本可编辑、滚轮缩放</span>
           </div>
           <div class="toolbar-right">
-
-            <!-- 主题 -->
-            <div class="dropdown-wrap" @click.stop>
-              <button class="btn-bar" @click="showThemePanel=!showThemePanel; showStylePanel=false; showExportMenu=false">
-                🎨 主题
-              </button>
-              <div class="dropdown-panel theme-panel" v-if="showThemePanel">
-                <div v-for="(t,k) in THEMES" :key="k"
-                  class="theme-item" :class="{active: currentThemeName===k}"
-                  @click="currentThemeName=k; showThemePanel=false">
-                  <span class="theme-dot" :style="{background:t.entity, border:'2px solid '+t.entityStroke}"></span>
-                  {{ t.name }}
-                </div>
-              </div>
+            <div class="caption-inline">
+              <span>图</span>
+              <input type="number" min="1" v-model.number="erChapter" />
+              <span>-</span>
+              <input type="number" min="1" v-model.number="erFigure" />
+              <input class="caption-title-input" v-model="erCaptionTitle" placeholder="图标题" />
+              <button class="btn-cap" @click="copyErCaption">📋 图注</button>
             </div>
 
             <!-- 修改样式 -->
@@ -415,14 +452,17 @@ body { font-family: 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-s
 /* ── 顶部导航 ── */
 .header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 20px; height: 50px; flex-shrink: 0;
+  padding: 8px 20px; min-height: 58px; flex-shrink: 0;
   background: #fff; border-bottom: 1px solid #e2e8f0;
-  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  box-shadow: 0 1px 3px rgba(0,0,0,.06); gap: 12px; flex-wrap: wrap;
 }
 .logo { display: flex; align-items: center; gap: 8px; }
 .logo-icon { font-size: 22px; color: #3b82f6; }
 .logo-text { font-size: 18px; font-weight: 700; color: #1e293b; }
-.mode-tabs { display: flex; gap: 2px; background: #f1f5f9; border-radius: 8px; padding: 3px; }
+.mode-tabs {
+  display: flex; gap: 2px; background: #f1f5f9; border-radius: 8px; padding: 3px;
+  flex-wrap: wrap; max-width: min(100%, 980px);
+}
 .mode-tab {
   padding: 5px 16px; border: none; border-radius: 6px; background: transparent;
   font-size: 13px; cursor: pointer; color: #64748b; font-weight: 500; transition: all 0.15s;
@@ -491,6 +531,21 @@ body { font-family: 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-s
 .toolbar-title { font-size: 14px; font-weight: 600; white-space: nowrap; }
 .toolbar-hint { font-size: 11px; color: #94a3b8; white-space: nowrap; }
 .toolbar-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.caption-inline {
+  display: flex; align-items: center; gap: 4px;
+  padding: 2px 6px; border: 1px solid #e2e8f0; border-radius: 6px;
+  background: #fff; font-size: 11px; color: #64748b;
+}
+.caption-inline input {
+  width: 54px; padding: 3px 4px; border: 1px solid #cbd5e1; border-radius: 4px;
+  font-size: 11px;
+}
+.caption-inline .caption-title-input { width: 120px; }
+.btn-cap {
+  padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 5px;
+  background: #fff; font-size: 11px; cursor: pointer; color: #475569;
+}
+.btn-cap:hover { background: #f1f5f9; }
 
 .btn-bar {
   padding: 5px 12px; border: 1px solid #e2e8f0; border-radius: 6px;
