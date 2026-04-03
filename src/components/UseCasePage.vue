@@ -1,42 +1,16 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
-import { layoutUseCase } from '../utils/usecaseLayout.js'
-import UseCaseDiagram from './UseCaseDiagram.vue'
-import { toPng, toJpeg } from 'html-to-image'
+import { computed, ref, watch } from 'vue'
 import { saveAs } from 'file-saver'
+import DrawioEmbed from './DrawioEmbed.vue'
+import {
+  AI_PRESETS,
+  applyAiPreset,
+  loadDiagramAiSettings,
+  requestAiChatCompletion,
+  saveDiagramAiSettings
+} from '../utils/diagramAi.js'
+import { convertPngDataUrlToJpeg, exportPayloadToBlob } from '../utils/drawioClientExport.js'
 
-// ─── 主题 ───
-const UC_THEMES = {
-  color: {
-    name: '彩色分类',
-    ucFill: '#dae8fc', ucStroke: '#6c8ebf', ucText: '#333',
-    includeFill: '#fff2cc', includeStroke: '#d6b656',
-    extendFill: '#e1d5e7', extendStroke: '#9673a6',
-    actorStroke: '#333', actorText: '#333',
-    line: '#555', includeLine: '#888', extendLine: '#9673a6'
-  },
-  bw: {
-    name: '经典黑白',
-    ucFill: '#f5f5f5', ucStroke: '#333', ucText: '#000',
-    includeFill: '#e8e8e8', includeStroke: '#666',
-    extendFill: '#e8e8e8', extendStroke: '#666',
-    actorStroke: '#333', actorText: '#000',
-    line: '#333', includeLine: '#666', extendLine: '#666'
-  },
-  blue: {
-    name: '蓝灰简约',
-    ucFill: '#E3F2FD', ucStroke: '#1976D2', ucText: '#1a237e',
-    includeFill: '#FFF3E0', includeStroke: '#F57C00',
-    extendFill: '#F3E5F5', extendStroke: '#7B1FA2',
-    actorStroke: '#555', actorText: '#333',
-    line: '#666', includeLine: '#F57C00', extendLine: '#7B1FA2'
-  }
-}
-
-const currentTheme = ref('color')
-const theme = computed(() => UC_THEMES[currentTheme.value])
-
-// ─── 数据模型 ───
 const actors = ref([
   {
     name: '用户',
@@ -45,111 +19,160 @@ const actors = ref([
       { name: '登录系统', type: 'main' },
       { name: '浏览商品', type: 'main' },
       { name: '下单购买', type: 'main' },
-      { name: '验证身份', type: 'include', parentUc: '登录系统' },
+      { name: '验证身份', type: 'include', parentUc: '登录系统' }
     ]
   }
 ])
 
 const extraRelations = ref([])
-
-// ─── 布局计算 ───
-const layout = computed(() => {
-  return layoutUseCase(actors.value, extraRelations.value)
-})
-
-const ucRef = ref(null)
-
-// ─── Actor管理 ───
-function addActor() {
-  actors.value.push({ name: '新参与者', usecases: [] })
-}
-
-function removeActor(idx) {
-  if (actors.value.length <= 1) return
-  actors.value.splice(idx, 1)
-}
-
-function addUseCase(actorIdx, type = 'main', parentUc = '') {
-  actors.value[actorIdx].usecases.push({
-    name: '新用例',
-    type,
-    parentUc: parentUc || undefined
-  })
-}
-
-function removeUseCase(actorIdx, ucIdx) {
-  actors.value[actorIdx].usecases.splice(ucIdx, 1)
-}
-
-// ─── 关系管理 ───
 const showRelPanel = ref(false)
 const newRel = ref({ from: '', to: '', type: 'include' })
-
-function addRelation() {
-  if (newRel.value.from && newRel.value.to) {
-    extraRelations.value.push({ ...newRel.value })
-    newRel.value = { from: '', to: '', type: 'include' }
-    showRelPanel.value = false
-  }
-}
-
-function removeRelation(idx) {
-  extraRelations.value.splice(idx, 1)
-}
-
-// 所有用例名(用于关系选择下拉)
-const allUcNames = computed(() => {
-  const names = []
-  for (const a of actors.value) {
-    for (const uc of a.usecases) {
-      names.push(uc.name)
-    }
-  }
-  return [...new Set(names)]
-})
-
-// ─── 导出 ───
-const showExportMenu = ref(false)
-
-async function exportImg(type) {
-  showExportMenu.value = false
-  const svgEl = ucRef.value?.svgEl
-  if (!svgEl) return
-  try {
-    const bg = currentTheme.value === 'bw' ? '#fff' : '#fff'
-    if (type === 'png') {
-      const url = await toPng(svgEl, { backgroundColor: bg, pixelRatio: 3 })
-      saveAs(url, 'usecase-diagram.png')
-    } else if (type === 'jpeg') {
-      const url = await toJpeg(svgEl, { backgroundColor: bg, pixelRatio: 3 })
-      saveAs(url, 'usecase-diagram.jpg')
-    }
-  } catch (e) {
-    alert('导出失败: ' + e.message)
-  }
-}
-
-// ─── 文本快速解析（粘贴格式直接生成，无需API） ───
 const showParsePanel = ref(true)
 const parseInput = ref(`用户: 注册账号, 登录系统, 浏览商品, 下单购买
 管理员: 管理用户, 查看数据统计, 管理知识文章
 登录系统 include 验证身份
 下单购买 extend 使用优惠券`)
 
+const showAiPanel = ref(false)
+const showAiConfig = ref(false)
+const aiPrompt = ref('')
+const aiLoading = ref(false)
+const aiSettings = ref(loadDiagramAiSettings())
+
+const editorXml = ref('')
+const editorRevision = ref(0)
+const lastAppliedSignature = ref('')
+const drawioRef = ref(null)
+const showExportMenu = ref(false)
+const canvasReady = ref(false)
+const canvasBusy = ref(false)
+const renderError = ref('')
+const toast = ref({ show: false, msg: '', type: 'success' })
+
+const chapterNo = ref(3)
+const figureNo = ref(1)
+const captionTitle = ref('系统用例图')
+const jsonFileInput = ref(null)
+
+let buildUseCaseDrawioXmlFn = null
+
+function showToast(msg, type = 'success') {
+  toast.value = { show: true, msg, type }
+  window.setTimeout(() => {
+    toast.value.show = false
+  }, 2600)
+}
+
+function buildCaption() {
+  const title = captionTitle.value.trim() || '系统用例图'
+  return `图${chapterNo.value}-${figureNo.value} ${title}`
+}
+
+function exportBaseName() {
+  const title = (captionTitle.value.trim() || '系统用例图')
+    .replace(/\s+/g, '')
+    .replace(/[\\/:*?"<>|]/g, '')
+  return `fig${chapterNo.value}-${figureNo.value}-${title}`
+}
+
+const snapshot = computed(() => JSON.stringify({
+  actors: actors.value,
+  relations: extraRelations.value,
+  caption: buildCaption()
+}))
+
+const canvasDirty = computed(() => snapshot.value !== lastAppliedSignature.value)
+
+const allUcNames = computed(() => {
+  const names = []
+  for (const actor of actors.value) {
+    for (const uc of actor.usecases) names.push(uc.name)
+  }
+  return [...new Set(names.filter(Boolean))]
+})
+
+async function ensureBuilder() {
+  if (!buildUseCaseDrawioXmlFn) {
+    const mod = await import('../utils/usecaseDrawioBuilder.js')
+    buildUseCaseDrawioXmlFn = mod.buildUseCaseDrawioXml
+  }
+}
+
+async function applyToCanvas() {
+  if (actors.value.length === 0 || actors.value.every(actor => actor.usecases.length === 0)) {
+    showToast('请先添加参与者和用例', 'warn')
+    return
+  }
+  canvasBusy.value = true
+  canvasReady.value = false
+  renderError.value = ''
+  showExportMenu.value = false
+  try {
+    await ensureBuilder()
+    editorXml.value = buildUseCaseDrawioXmlFn({
+      actors: actors.value,
+      relations: extraRelations.value,
+      diagramName: buildCaption()
+    })
+    editorRevision.value += 1
+    lastAppliedSignature.value = snapshot.value
+    showToast('已同步到可编辑画布')
+  } catch (error) {
+    renderError.value = error.message || '用例图画布生成失败'
+    showToast(renderError.value, 'error')
+  } finally {
+    canvasBusy.value = false
+  }
+}
+
+function addActor() {
+  actors.value.push({ name: '新参与者', usecases: [] })
+}
+
+function removeActor(index) {
+  if (actors.value.length <= 1) return
+  actors.value.splice(index, 1)
+}
+
+function addUseCase(actorIndex, type = 'main', parentUc = '') {
+  actors.value[actorIndex].usecases.push({
+    name: '新用例',
+    type,
+    parentUc: parentUc || undefined
+  })
+}
+
+function removeUseCase(actorIndex, ucIndex) {
+  actors.value[actorIndex].usecases.splice(ucIndex, 1)
+}
+
+function addRelation() {
+  if (!newRel.value.from || !newRel.value.to) return
+  extraRelations.value.push({ ...newRel.value })
+  newRel.value = { from: '', to: '', type: 'include' }
+  showRelPanel.value = false
+}
+
+function removeRelation(index) {
+  extraRelations.value.splice(index, 1)
+}
+
 function parseText() {
   const text = parseInput.value.trim()
-  if (!text) { showToast('请输入内容'); return }
+  if (!text) {
+    showToast('请输入内容', 'warn')
+    return
+  }
 
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  const lines = text.split('\n').map(line => line.trim()).filter(Boolean)
   const newActors = []
-  const relations = [] // include/extend 关系行
+  const relations = []
 
   for (const line of lines) {
-    // 格式1: "角色: 功能1, 功能2, 功能3" 或 "角色：功能1、功能2、功能3"
     const actorMatch = line.match(/^(.+?)[：:]\s*(.+)$/)
     if (actorMatch) {
       const actorName = actorMatch[1].trim()
-      const ucList = actorMatch[2].split(/[,，、;；]/).map(s => s.trim()).filter(Boolean)
+      const ucList = actorMatch[2].split(/[,，、;；]/).map(item => item.trim()).filter(Boolean)
       newActors.push({
         name: actorName,
         usecases: ucList.map(name => ({ name, type: 'main' }))
@@ -157,7 +180,6 @@ function parseText() {
       continue
     }
 
-    // 格式2: "用例A include 用例B" 或 "用例A extend 用例B"
     const relMatch = line.match(/^(.+?)\s+(include|extend)\s+(.+)$/i)
     if (relMatch) {
       relations.push({
@@ -165,18 +187,15 @@ function parseText() {
         type: relMatch[2].toLowerCase(),
         childUc: relMatch[3].trim()
       })
-      continue
     }
   }
 
   if (newActors.length === 0) {
-    showToast('未识别到参与者，请检查格式')
+    showToast('未识别到参与者，请检查格式', 'warn')
     return
   }
 
-  // 把 include/extend 关系绑定到对应的Actor
   for (const rel of relations) {
-    // 找到 parentUc 所在的 actor
     for (const actor of newActors) {
       const parent = actor.usecases.find(uc => uc.name === rel.parentUc && uc.type === 'main')
       if (parent) {
@@ -193,26 +212,17 @@ function parseText() {
   actors.value = newActors
   extraRelations.value = []
   showParsePanel.value = false
-  showToast(`解析成功！${newActors.length}个参与者`)
+  showToast(`解析成功，识别到 ${newActors.length} 个参与者`)
 }
 
-// ─── AI 自动生成 ───
-const showAiPanel = ref(false)
-const aiPrompt = ref('')
-const aiLoading = ref(false)
-const aiConfig = ref({
-  baseUrl: localStorage.getItem('uc_ai_baseUrl') || 'https://api.deepseek.com',
-  apiKey: localStorage.getItem('uc_ai_apiKey') || '',
-  model: localStorage.getItem('uc_ai_model') || 'deepseek-chat'
-})
-const showAiConfig = ref(false)
-
 function saveAiConfig() {
-  localStorage.setItem('uc_ai_baseUrl', aiConfig.value.baseUrl)
-  localStorage.setItem('uc_ai_apiKey', aiConfig.value.apiKey)
-  localStorage.setItem('uc_ai_model', aiConfig.value.model)
+  saveDiagramAiSettings(aiSettings.value)
   showAiConfig.value = false
-  showToast('API配置已保存')
+  showToast('AI 配置已保存到浏览器本地')
+}
+
+function changeAiPreset(presetId) {
+  aiSettings.value = applyAiPreset(presetId, aiSettings.value)
 }
 
 const AI_SYSTEM_PROMPT = `你是一个UML用例图专家。用户会描述一个系统，你需要分析并输出该系统的参与者(Actor)和用例(UseCase)。
@@ -235,105 +245,141 @@ JSON格式：
         { "name": "扩展用例名称", "type": "extend", "parentUc": "父用例名称" }
       ]
     }
+  ],
+  "relations": [
+    { "from": "用例A", "to": "用例B", "type": "association" }
   ]
 }
 
-type只能是 main、include、extend 三种。include和extend必须有parentUc指向同一Actor下的某个main用例。`
+type 只能是 main、include、extend、association、generalization。`
 
 async function aiGenerate() {
-  if (!aiConfig.value.apiKey) {
-    showAiConfig.value = true
-    showToast('请先配置API Key')
-    return
-  }
   if (!aiPrompt.value.trim()) {
-    showToast('请输入系统描述')
+    showToast('请输入系统描述', 'warn')
     return
   }
-
   aiLoading.value = true
   try {
-    const baseUrl = aiConfig.value.baseUrl.replace(/\/+$/, '')
-    const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${aiConfig.value.apiKey}`
-      },
-      body: JSON.stringify({
-        model: aiConfig.value.model,
+    const data = await requestAiChatCompletion({
+      settings: aiSettings.value,
+      body: {
+        model: aiSettings.value.model,
+        temperature: typeof aiSettings.value.temperature === 'number' ? aiSettings.value.temperature : 0.3,
+        response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: AI_SYSTEM_PROMPT },
           { role: 'user', content: aiPrompt.value }
-        ],
-        temperature: 0.3,
-        response_format: { type: 'json_object' }
-      })
+        ]
+      }
     })
 
-    if (!resp.ok) {
-      const errText = await resp.text()
-      throw new Error(`API错误 ${resp.status}: ${errText.substring(0, 200)}`)
-    }
-
-    const data = await resp.json()
-    const content = data.choices?.[0]?.message?.content
-    if (!content) throw new Error('AI返回内容为空')
+    const content = data?.choices?.[0]?.message?.content
+    if (!content) throw new Error('AI 返回内容为空')
 
     const result = JSON.parse(content)
-    if (result.actors && Array.isArray(result.actors)) {
-      actors.value = result.actors
-      extraRelations.value = result.relations || []
-      showAiPanel.value = false
-      showToast(`AI生成成功！${result.actors.length}个参与者`)
-    } else {
-      throw new Error('返回格式不正确，缺少actors数组')
-    }
-  } catch (e) {
-    showToast('AI生成失败: ' + e.message)
+    if (!Array.isArray(result.actors)) throw new Error('返回格式不正确，缺少 actors 数组')
+
+    actors.value = result.actors
+    extraRelations.value = Array.isArray(result.relations) ? result.relations : []
+    saveDiagramAiSettings(aiSettings.value)
+    showAiPanel.value = false
+    await applyToCanvas()
+    showToast(`AI 生成成功，识别到 ${result.actors.length} 个参与者`)
+  } catch (error) {
+    showToast(`AI 生成失败: ${error.message}`, 'error')
   } finally {
     aiLoading.value = false
   }
 }
 
-// ─── Toast ───
-const toast = ref({ show: false, msg: '' })
-function showToast(msg) {
-  toast.value = { show: true, msg }
-  setTimeout(() => { toast.value.show = false }, 2500)
-}
-
-// ─── JSON导入导出 ───
 function exportJSON() {
   const data = JSON.stringify({ actors: actors.value, relations: extraRelations.value }, null, 2)
   saveAs(new Blob([data], { type: 'application/json' }), 'usecase-data.json')
-  showToast('JSON已导出')
+  showToast('JSON 已导出')
 }
 
-const jsonFileInput = ref(null)
 function importJSON() {
   jsonFileInput.value?.click()
 }
-function onJSONImport(e) {
-  const file = e.target.files[0]
+
+function onJSONImport(event) {
+  const file = event.target.files?.[0]
   if (!file) return
   const reader = new FileReader()
-  reader.onload = (ev) => {
+  reader.onload = async ev => {
     try {
       const data = JSON.parse(ev.target.result)
-      if (data.actors) actors.value = data.actors
-      if (data.relations) extraRelations.value = data.relations
-      showToast('导入成功')
-    } catch { showToast('JSON格式错误') }
+      if (Array.isArray(data.actors)) actors.value = data.actors
+      if (Array.isArray(data.relations)) extraRelations.value = data.relations
+      await applyToCanvas()
+      showToast('JSON 导入成功')
+    } catch {
+      showToast('JSON 格式错误', 'error')
+    }
   }
   reader.readAsText(file)
-  e.target.value = ''
+  event.target.value = ''
 }
+
+async function copyCaption() {
+  try {
+    await navigator.clipboard.writeText(buildCaption())
+    showToast('图注已复制')
+  } catch {
+    showToast('复制失败，请手动复制', 'warn')
+  }
+}
+
+function handleAutosave(xml) {
+  editorXml.value = xml
+}
+
+function handleCanvasReady() {
+  canvasReady.value = true
+}
+
+function handleCanvasError(error) {
+  renderError.value = error.message || '用例图画布加载失败'
+  showToast(renderError.value, 'error')
+}
+
+async function exportDiagram(type) {
+  showExportMenu.value = false
+  if (!drawioRef.value) {
+    showToast('画布尚未准备好', 'warn')
+    return
+  }
+  try {
+    if (type === 'drawio') {
+      const xml = await drawioRef.value.exportDiagram('drawio')
+      saveAs(new Blob([xml], { type: 'application/xml' }), `${exportBaseName()}.drawio`)
+      showToast('已导出 Draw.io 文件')
+      return
+    }
+    if (type === 'jpeg') {
+      const pngDataUrl = await drawioRef.value.exportDiagram('png')
+      const jpegDataUrl = await convertPngDataUrlToJpeg(pngDataUrl)
+      saveAs(await exportPayloadToBlob(jpegDataUrl, 'image/jpeg'), `${exportBaseName()}.jpg`)
+      showToast('已导出 JPG')
+      return
+    }
+    const payload = await drawioRef.value.exportDiagram(type)
+    const ext = type === 'svg' ? 'svg' : 'png'
+    const mime = type === 'svg' ? 'image/svg+xml' : 'image/png'
+    saveAs(await exportPayloadToBlob(payload, mime), `${exportBaseName()}.${ext}`)
+    showToast(`已导出 ${ext.toUpperCase()}`)
+  } catch (error) {
+    showToast(`导出失败: ${error.message}`, 'error')
+  }
+}
+
+watch([actors, extraRelations, chapterNo, figureNo, captionTitle], () => {}, { deep: true })
+
+await applyToCanvas()
 </script>
 
 <template>
   <div class="uc-page">
-    <!-- 左侧编辑器 -->
     <div class="uc-left">
       <div class="uc-left-header">
         <div class="uc-left-title">
@@ -341,79 +387,104 @@ function onJSONImport(e) {
           <span>用例图编辑器</span>
         </div>
         <div class="uc-left-actions">
-          <button class="btn-sm btn-parse" @click="showParsePanel = !showParsePanel; showAiPanel = false">📋 粘贴生成</button>
-          <button class="btn-sm btn-ai" @click="showAiPanel = !showAiPanel; showParsePanel = false">✦ AI生成</button>
-          <button class="btn-sm btn-primary" @click="addActor">+ 参与者</button>
-          <button class="btn-sm" @click="showRelPanel = !showRelPanel">🔗 关系</button>
-          <button class="btn-sm" @click="exportJSON">💾</button>
-          <button class="btn-sm" @click="importJSON">📂</button>
-          <input type="file" ref="jsonFileInput" accept=".json" style="display:none" @change="onJSONImport"/>
+          <button class="btn-sm btn-parse" @click="showParsePanel = !showParsePanel; showAiPanel = false">粘贴生成</button>
+          <button class="btn-sm btn-ai" @click="showAiPanel = !showAiPanel; showParsePanel = false">AI生成</button>
+          <button class="btn-sm btn-primary" @click="applyToCanvas">应用到画布</button>
+          <button class="btn-sm" @click="exportJSON">导出JSON</button>
+          <button class="btn-sm" @click="importJSON">导入JSON</button>
+          <input ref="jsonFileInput" type="file" accept=".json" style="display:none" @change="onJSONImport" />
         </div>
       </div>
 
+      <div class="paper-note">
+        <span class="paper-tag">最佳实践</span>
+        <span class="paper-text">左侧结构化编辑参与者和用例，右侧在 draw.io 画布里继续微调布局和连线。</span>
+      </div>
+
+      <div class="caption-box">
+        <div class="caption-row">
+          <label>章节</label>
+          <input type="number" v-model.number="chapterNo" min="1" />
+          <label>序号</label>
+          <input type="number" v-model.number="figureNo" min="1" />
+        </div>
+        <div class="caption-row">
+          <label>标题</label>
+          <input class="title-input" v-model="captionTitle" placeholder="图标题" />
+        </div>
+        <div class="caption-preview">{{ buildCaption() }}</div>
+        <button class="btn-sm" @click="copyCaption">复制图注</button>
+      </div>
+
+      <div class="sync-bar" :class="{ dirty: canvasDirty }">
+        <span>{{ canvasDirty ? '结构已修改，尚未同步到画布' : '结构与画布已同步' }}</span>
+        <span class="sync-meta">{{ allUcNames.length }} 个用例</span>
+      </div>
+
       <div class="uc-editor-body">
-        <!-- 粘贴文本快速生成面板 -->
         <div v-if="showParsePanel" class="parse-panel">
           <div class="parse-panel-header">
-            <span class="parse-panel-title">📋 粘贴文本快速生成</span>
+            <span class="parse-panel-title">粘贴文本快速生成</span>
             <button class="btn-icon" @click="showParsePanel = false">✕</button>
           </div>
-          <textarea v-model="parseInput" class="parse-textarea"
-            placeholder="按以下格式输入，一行一条：&#10;&#10;角色: 功能1, 功能2, 功能3&#10;角色: 功能1、功能2、功能3&#10;用例A include 子用例B&#10;用例A extend 扩展用例C&#10;&#10;示例：&#10;用户: 注册账号, 登录系统, AI智能咨询, 记录情绪日记&#10;管理员: 管理用户, 查看数据统计, 管理知识文章&#10;登录系统 include 验证身份&#10;AI智能咨询 extend 查看历史记录"
-            rows="8"></textarea>
+          <textarea v-model="parseInput" class="parse-textarea" rows="8"></textarea>
           <div class="parse-format-hint">
-            <div class="hint-title">格式说明：</div>
+            <div class="hint-title">格式说明</div>
             <div class="hint-row"><span class="hint-tag tag-actor">角色</span> <code>角色名: 功能1, 功能2, 功能3</code></div>
             <div class="hint-row"><span class="hint-tag tag-include">include</span> <code>主用例 include 子用例</code></div>
             <div class="hint-row"><span class="hint-tag tag-extend">extend</span> <code>主用例 extend 扩展用例</code></div>
           </div>
           <div class="parse-panel-footer">
-            <button class="btn-sm btn-parse-go" @click="parseText">▶ 生成用例图</button>
+            <button class="btn-sm btn-primary" @click="parseText">生成用例图</button>
           </div>
         </div>
 
-        <!-- AI生成面板 -->
         <div v-if="showAiPanel" class="ai-panel">
           <div class="ai-panel-header">
-            <span class="ai-panel-title">✦ AI智能生成用例图</span>
-            <button class="btn-icon" @click="showAiConfig = !showAiConfig" title="API配置">⚙</button>
+            <span class="ai-panel-title">AI 智能生成用例图</span>
+            <button class="btn-icon" @click="showAiConfig = !showAiConfig">⚙</button>
           </div>
-          <!-- API配置 -->
           <div v-if="showAiConfig" class="ai-config">
             <div class="ai-config-row">
+              <label>模型预设</label>
+              <select :value="aiSettings.presetId" @change="changeAiPreset($event.target.value)">
+                <option v-for="preset in AI_PRESETS" :key="preset.id" :value="preset.id">{{ preset.name }}</option>
+              </select>
+            </div>
+            <div class="ai-config-row">
               <label>API地址</label>
-              <input v-model="aiConfig.baseUrl" placeholder="https://api.deepseek.com"/>
+              <input v-model="aiSettings.baseUrl" placeholder="https://api.longcat.chat/openai" />
+            </div>
+            <div class="ai-config-row">
+              <label>接口路径</label>
+              <input v-model="aiSettings.endpointPath" placeholder="/chat/completions" />
             </div>
             <div class="ai-config-row">
               <label>API Key</label>
-              <input v-model="aiConfig.apiKey" type="password" placeholder="sk-..."/>
+              <input v-model="aiSettings.apiKey" type="password" placeholder="只保存在浏览器本地" />
             </div>
             <div class="ai-config-row">
               <label>模型</label>
-              <input v-model="aiConfig.model" placeholder="deepseek-chat"/>
+              <input v-model="aiSettings.model" placeholder="LongCat-Flash-Thinking / glm-4.7" />
             </div>
-            <button class="btn-sm btn-primary" @click="saveAiConfig" style="margin-top:6px">保存配置</button>
+            <button class="btn-sm btn-primary" @click="saveAiConfig">保存配置</button>
           </div>
-          <textarea v-model="aiPrompt" class="ai-textarea"
-            placeholder="描述你的系统，例如：&#10;心理健康助手系统，包含用户和管理员两个角色。用户可以注册登录、AI智能咨询、记录情绪日记、查看情绪统计、浏览心理知识文章。管理员可以管理用户、查看数据统计、管理知识库文章。"
-            rows="5"></textarea>
+          <textarea v-model="aiPrompt" class="ai-textarea" rows="5" placeholder="描述你的系统，例如：心理健康助手系统，包含用户和管理员两个角色..."></textarea>
           <div class="ai-panel-footer">
-            <button class="btn-sm btn-ai-go" @click="aiGenerate" :disabled="aiLoading">
-              {{ aiLoading ? '⏳ 生成中...' : '✦ 开始生成' }}
+            <span class="ai-hint">AI 会直接生成参与者、主用例以及 include/extend 结构。</span>
+            <button class="btn-sm btn-primary" @click="aiGenerate" :disabled="aiLoading">
+              {{ aiLoading ? '生成中...' : '开始生成' }}
             </button>
-            <span class="ai-hint">支持DeepSeek/OpenAI等兼容接口</span>
           </div>
         </div>
 
-        <!-- 参与者列表 -->
         <div v-for="(actor, ai) in actors" :key="ai" class="actor-card">
           <div class="actor-header">
             <span class="actor-icon">🧑</span>
-            <input class="actor-name-input" v-model="actor.name" placeholder="参与者名称"/>
-            <button class="btn-icon btn-danger" @click="removeActor(ai)" title="删除参与者">✕</button>
+            <input v-model="actor.name" class="actor-name-input" placeholder="参与者名称" />
+            <button class="btn-icon btn-danger" @click="removeActor(ai)">✕</button>
           </div>
 
-          <!-- 用例列表 -->
           <div v-for="(uc, ui) in actor.usecases" :key="ui" class="uc-item">
             <div class="uc-item-row">
               <select v-model="uc.type" class="uc-type-select">
@@ -421,14 +492,14 @@ function onJSONImport(e) {
                 <option value="include">«include»</option>
                 <option value="extend">«extend»</option>
               </select>
-              <input class="uc-name-input" v-model="uc.name" placeholder="用例名称"/>
-              <button class="btn-icon btn-danger" @click="removeUseCase(ai, ui)" title="删除">✕</button>
+              <input v-model="uc.name" class="uc-name-input" placeholder="用例名称" />
+              <button class="btn-icon btn-danger" @click="removeUseCase(ai, ui)">✕</button>
             </div>
             <div v-if="uc.type === 'include' || uc.type === 'extend'" class="uc-parent-row">
-              <span class="uc-parent-label">关联主用例:</span>
+              <span class="uc-parent-label">关联主用例</span>
               <select v-model="uc.parentUc" class="uc-parent-select">
                 <option value="">选择...</option>
-                <option v-for="muc in actor.usecases.filter(u => u.type === 'main')" :key="muc.name" :value="muc.name">
+                <option v-for="muc in actor.usecases.filter(item => item.type === 'main')" :key="muc.name" :value="muc.name">
                   {{ muc.name }}
                 </option>
               </select>
@@ -442,19 +513,23 @@ function onJSONImport(e) {
           </div>
         </div>
 
-        <!-- 额外关系面板 -->
+        <div class="toolbar-inline">
+          <button class="btn-sm btn-primary" @click="addActor">+ 参与者</button>
+          <button class="btn-sm" @click="showRelPanel = !showRelPanel">跨参与者关系</button>
+        </div>
+
         <div v-if="showRelPanel" class="rel-panel">
           <div class="rel-title">跨参与者关系</div>
-          <div v-for="(r, ri) in extraRelations" :key="ri" class="rel-item">
-            <span>{{ r.from }}</span>
-            <span class="rel-arrow">→ {{ r.type }} →</span>
-            <span>{{ r.to }}</span>
+          <div v-for="(rel, ri) in extraRelations" :key="ri" class="rel-item">
+            <span>{{ rel.from }}</span>
+            <span class="rel-arrow">→ {{ rel.type }} →</span>
+            <span>{{ rel.to }}</span>
             <button class="btn-icon btn-danger" @click="removeRelation(ri)">✕</button>
           </div>
           <div class="rel-add-row">
             <select v-model="newRel.from" class="rel-select">
               <option value="">从...</option>
-              <option v-for="n in allUcNames" :key="n" :value="n">{{ n }}</option>
+              <option v-for="name in allUcNames" :key="name" :value="name">{{ name }}</option>
             </select>
             <select v-model="newRel.type" class="rel-type-select">
               <option value="association">关联</option>
@@ -464,7 +539,7 @@ function onJSONImport(e) {
             </select>
             <select v-model="newRel.to" class="rel-select">
               <option value="">到...</option>
-              <option v-for="n in allUcNames" :key="n" :value="n">{{ n }}</option>
+              <option v-for="name in allUcNames" :key="name" :value="name">{{ name }}</option>
             </select>
             <button class="btn-sm btn-primary" @click="addRelation">添加</button>
           </div>
@@ -472,266 +547,381 @@ function onJSONImport(e) {
       </div>
     </div>
 
-    <!-- 右侧预览 -->
     <div class="uc-right">
       <div class="uc-toolbar">
         <div class="uc-toolbar-left">
-          <span class="icon">🖼</span>
-          <span class="toolbar-title">用例图预览</span>
-          <span class="toolbar-hint">节点可拖拽、滚轮缩放</span>
+          <span class="toolbar-title">可编辑用例图画布</span>
+          <span class="toolbar-hint">支持手动调整参与者、用例位置和连线细节。</span>
         </div>
         <div class="uc-toolbar-right">
-          <!-- 主题 -->
-          <select v-model="currentTheme" class="theme-select">
-            <option v-for="(t, k) in UC_THEMES" :key="k" :value="k">🎨 {{ t.name }}</option>
-          </select>
-
-          <!-- 导出 -->
-          <div class="dropdown-wrap" @click.stop>
-            <button class="btn-export" @click="exportImg('png')">📥 导出PNG</button>
-            <button class="btn-export-more" @click="showExportMenu=!showExportMenu">▾</button>
-            <div class="dropdown-panel" v-if="showExportMenu">
-              <div class="export-item" @click="exportImg('png')">📷 导出 PNG</div>
-              <div class="export-item" @click="exportImg('jpeg')">🖼 导出 JPEG</div>
+          <span class="canvas-status" :class="{ ready: canvasReady }">
+            {{ canvasBusy ? '排版中' : canvasReady ? '画布已就绪' : '等待画布' }}
+          </span>
+          <div class="dropdown-wrap">
+            <button class="btn-export" @click="exportDiagram('png')" :disabled="!canvasReady">导出PNG</button>
+            <button class="btn-export-more" @click="showExportMenu = !showExportMenu" :disabled="!canvasReady">▾</button>
+            <div v-if="showExportMenu" class="dropdown-panel">
+              <div class="export-item" @click="exportDiagram('png')">PNG</div>
+              <div class="export-item" @click="exportDiagram('jpeg')">JPG</div>
+              <div class="export-item" @click="exportDiagram('svg')">SVG</div>
+              <div class="export-divider"></div>
+              <div class="export-item" @click="exportDiagram('drawio')">Draw.io XML</div>
             </div>
           </div>
         </div>
       </div>
 
+      <div class="canvas-note">
+        <span>include / extend / 泛化 会自动用 UML 关系样式初始化，后续可以直接在画布里继续调整。</span>
+      </div>
+
       <div class="uc-canvas">
-        <UseCaseDiagram
-          ref="ucRef"
-          :nodes="layout.nodes"
-          :edges="layout.edges"
-          :canvasWidth="layout.width"
-          :canvasHeight="layout.height"
-          :theme="theme"
+        <div v-if="renderError" class="render-error">{{ renderError }}</div>
+        <DrawioEmbed
+          v-else-if="editorXml"
+          :key="editorRevision"
+          ref="drawioRef"
+          :xml="editorXml"
+          :diagram-name="exportBaseName()"
+          @autosave="handleAutosave"
+          @ready="handleCanvasReady"
+          @error="handleCanvasError"
         />
-        <div v-if="actors.length === 0 || actors.every(a => a.usecases.length === 0)" class="placeholder">
-          <div class="placeholder-icon">👤</div>
-          <p>在左侧添加参与者和用例</p>
-          <p class="placeholder-sub">自动生成UML用例图</p>
-        </div>
+        <div v-else class="placeholder">请先在左侧生成用例结构并应用到画布</div>
       </div>
     </div>
 
-    <!-- Toast -->
     <transition name="toast">
-      <div v-if="toast.show" class="toast">{{ toast.msg }}</div>
+      <div v-if="toast.show" class="toast" :class="`toast-${toast.type}`">{{ toast.msg }}</div>
     </transition>
   </div>
 </template>
 
 <style scoped>
-.uc-page { display: flex; flex: 1; overflow: hidden; min-height: 0; }
-
-/* ── 左侧 ── */
+.uc-page { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 .uc-left {
-  width: 380px; min-width: 280px; display: flex; flex-direction: column;
-  border-right: 1px solid #e2e8f0; background: #fff; flex-shrink: 0;
+  width: 400px;
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-right: 1px solid #e2e8f0;
 }
 .uc-left-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px; border-bottom: 1px solid #e2e8f0; flex-shrink: 0; gap: 6px; flex-wrap: wrap;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
 }
-.uc-left-title { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; }
+.uc-left-title { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; color: #0f172a; }
 .uc-left-actions { display: flex; gap: 4px; flex-wrap: wrap; }
-
-.uc-editor-body { flex: 1; overflow-y: auto; padding: 10px 12px; }
-
-/* Actor卡片 */
+.paper-note, .caption-box, .parse-panel, .ai-panel, .rel-panel {
+  margin: 10px 12px 0;
+  padding: 10px;
+  border-radius: 10px;
+}
+.paper-note {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #dbeafe;
+  background: #f8fbff;
+}
+.paper-tag {
+  min-width: 68px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.paper-text { font-size: 12px; color: #334155; line-height: 1.6; }
+.caption-box {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.caption-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #475569; }
+.caption-row input, .ai-config-row input, .ai-config-row select {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.caption-row input { width: 70px; }
+.caption-row .title-input { flex: 1; width: auto; }
+.caption-preview {
+  padding: 8px 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 12px;
+  color: #0f172a;
+}
+.sync-bar {
+  margin: 10px 12px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #475569;
+}
+.sync-bar.dirty {
+  border-color: #fbbf24;
+  background: #fffbeb;
+  color: #92400e;
+}
+.sync-meta { color: #64748b; }
+.uc-editor-body { flex: 1; overflow-y: auto; padding-bottom: 12px; }
 .actor-card {
-  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
-  padding: 10px; margin-bottom: 12px;
+  margin: 10px 12px 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
 }
 .actor-header {
-  display: flex; align-items: center; gap: 6px; margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
 }
-.actor-icon { font-size: 18px; }
-.actor-name-input {
-  flex: 1; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
-  font-size: 14px; font-weight: 600; background: #fff;
+.actor-name-input, .uc-name-input, .parse-textarea, .ai-textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: #fff;
 }
-.actor-footer { display: flex; gap: 4px; margin-top: 8px; }
-
-/* 用例条目 */
+.actor-name-input { font-size: 14px; font-weight: 600; }
 .uc-item { margin-bottom: 6px; }
-.uc-item-row { display: flex; align-items: center; gap: 4px; }
-.uc-type-select {
-  width: 95px; padding: 3px 4px; border: 1px solid #cbd5e1; border-radius: 4px;
-  font-size: 11px; background: #fff; flex-shrink: 0;
+.uc-item-row { display: flex; gap: 4px; align-items: center; }
+.uc-type-select, .uc-parent-select, .rel-select, .rel-type-select {
+  height: 32px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 11px;
+  background: #fff;
 }
-.uc-name-input {
-  flex: 1; padding: 4px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
-  font-size: 13px; background: #fff;
-}
+.uc-type-select { width: 100px; flex-shrink: 0; }
 .uc-parent-row {
-  display: flex; align-items: center; gap: 4px; margin-top: 3px; padding-left: 99px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 106px;
+  margin-top: 4px;
 }
 .uc-parent-label { font-size: 11px; color: #64748b; white-space: nowrap; }
-.uc-parent-select {
-  flex: 1; padding: 2px 4px; border: 1px solid #cbd5e1; border-radius: 4px;
-  font-size: 11px; background: #fff;
+.actor-footer, .toolbar-inline, .parse-panel-footer, .ai-panel-footer, .rel-add-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
-
-/* 关系面板 */
-.rel-panel {
-  background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px;
-  padding: 10px; margin-top: 8px;
+.toolbar-inline { margin: 10px 12px 0; }
+.btn-sm, .btn-export, .btn-export-more {
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
 }
-.rel-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-.rel-item { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 4px; }
-.rel-arrow { color: #94a3b8; font-size: 11px; }
-.rel-add-row { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
-.rel-select, .rel-type-select {
-  padding: 3px 4px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 11px; background: #fff;
-}
-.rel-select { flex: 1; min-width: 70px; }
-
-/* ── 右侧 ── */
-.uc-right { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-
-.uc-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 14px; border-bottom: 1px solid #e2e8f0; background: #fff; flex-shrink: 0;
-}
-.uc-toolbar-left { display: flex; align-items: center; gap: 8px; }
-.toolbar-title { font-size: 14px; font-weight: 600; }
-.toolbar-hint { font-size: 11px; color: #94a3b8; }
-.uc-toolbar-right { display: flex; align-items: center; gap: 6px; }
-
-.theme-select {
-  padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 6px;
-  font-size: 12px; background: #fff; cursor: pointer;
-}
-
-.uc-canvas { flex: 1; position: relative; overflow: hidden; }
-
-/* 按钮 */
 .btn-sm {
-  padding: 4px 10px; border: 1px solid #e2e8f0; border-radius: 5px;
-  background: #fff; font-size: 11px; cursor: pointer; white-space: nowrap;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  background: #fff;
 }
-.btn-sm:hover { background: #f1f5f9; }
-.btn-sm.btn-primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
-.btn-sm.btn-primary:hover { background: #2563eb; }
-.btn-sm.btn-add-uc { color: #3b82f6; border-color: #bfdbfe; }
-.btn-sm.btn-add-sub { color: #7c3aed; border-color: #ddd6fe; font-size: 10px; }
-
+.btn-primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+.btn-add-uc { color: #2563eb; border-color: #bfdbfe; }
+.btn-add-sub { color: #7c3aed; border-color: #ddd6fe; }
+.btn-parse { color: #0284c7; border-color: #bae6fd; }
+.btn-ai { color: #7c3aed; border-color: #ddd6fe; }
 .btn-icon {
-  width: 22px; height: 22px; border: none; border-radius: 4px;
-  background: transparent; cursor: pointer; font-size: 12px; display: flex;
-  align-items: center; justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: #e2e8f0;
+  cursor: pointer;
 }
-.btn-icon.btn-danger:hover { background: #fee2e2; color: #dc2626; }
-
-.btn-export {
-  padding: 5px 12px; border: 1px solid #3b82f6; border-right: none; border-radius: 6px 0 0 6px;
-  background: #3b82f6; color: #fff; font-size: 12px; cursor: pointer; font-weight: 600;
-}
-.btn-export:hover { background: #2563eb; }
-.btn-export-more {
-  padding: 5px 8px; border: 1px solid #3b82f6; border-radius: 0 6px 6px 0;
-  background: #2563eb; color: #fff; font-size: 12px; cursor: pointer;
-}
-
-.dropdown-wrap { position: relative; display: flex; }
-.dropdown-panel {
-  position: absolute; top: calc(100% + 4px); right: 0; z-index: 200;
-  background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.12); min-width: 150px;
-}
-.export-item { padding: 8px 14px; font-size: 13px; cursor: pointer; }
-.export-item:hover { background: #f1f5f9; }
-
-.placeholder {
-  position: absolute; inset: 0; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; pointer-events: none;
-}
-.placeholder-icon { font-size: 48px; color: #cbd5e1; margin-bottom: 10px; }
-.placeholder p { font-size: 15px; color: #94a3b8; }
-.placeholder-sub { font-size: 12px; color: #cbd5e1; margin-top: 4px; }
-
-.icon { font-size: 16px; }
-
-.toast {
-  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
-  padding: 10px 24px; border-radius: 24px; font-size: 14px; font-weight: 500;
-  background: #22c55e; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.15); z-index: 9999;
-}
-.toast-enter-active, .toast-leave-active { transition: all 0.3s; }
-.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateX(-50%) translateY(16px); }
-
-/* ── 粘贴解析面板 ── */
+.btn-danger:hover { background: #fee2e2; color: #dc2626; }
 .parse-panel {
-  background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px;
-  padding: 10px; margin-bottom: 12px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
 }
-.parse-panel-header {
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+.parse-panel-header, .ai-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
 }
-.parse-panel-title { font-size: 13px; font-weight: 600; color: #0369a1; }
-.parse-textarea {
-  width: 100%; padding: 8px 10px; border: 1px solid #bae6fd; border-radius: 6px;
-  font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 12px;
-  line-height: 1.6; resize: vertical; background: #fff; color: #334155;
+.parse-panel-title, .ai-panel-title { font-size: 13px; font-weight: 700; color: #0f172a; }
+.parse-textarea, .ai-textarea {
+  font-family: 'Consolas', 'JetBrains Mono', monospace;
+  line-height: 1.6;
+  resize: vertical;
 }
-.parse-textarea:focus { outline: none; border-color: #0284c7; box-shadow: 0 0 0 2px rgba(2,132,199,.15); }
 .parse-format-hint {
-  margin-top: 8px; padding: 8px 10px; background: #e0f2fe; border-radius: 6px; font-size: 11px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #e0f2fe;
+  font-size: 11px;
 }
-.hint-title { font-weight: 600; color: #0369a1; margin-bottom: 4px; }
-.hint-row { margin-bottom: 2px; display: flex; align-items: center; gap: 6px; }
-.hint-row code { color: #475569; background: #fff; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+.hint-title { font-weight: 700; color: #0369a1; margin-bottom: 4px; }
+.hint-row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.hint-row code { background: #fff; padding: 1px 6px; border-radius: 4px; }
 .hint-tag {
-  display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; color: #fff;
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
 }
 .tag-actor { background: #3b82f6; }
 .tag-include { background: #d97706; }
 .tag-extend { background: #7c3aed; }
-.parse-panel-footer { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
-.btn-parse-go {
-  padding: 6px 18px; border: none; border-radius: 6px;
-  background: #0284c7; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
-}
-.btn-parse-go:hover { background: #0369a1; }
-.btn-sm.btn-parse { color: #0284c7; border-color: #bae6fd; font-weight: 500; }
-.btn-sm.btn-parse:hover { background: #f0f9ff; }
-
-/* ── AI生成面板 ── */
 .ai-panel {
-  background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px;
-  padding: 10px; margin-bottom: 12px;
+  background: #faf5ff;
+  border: 1px solid #e9d5ff;
 }
-.ai-panel-header {
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
-}
-.ai-panel-title { font-size: 13px; font-weight: 600; color: #7c3aed; }
 .ai-config {
-  background: #f5f3ff; border: 1px solid #e9d5ff; border-radius: 6px;
-  padding: 8px; margin-bottom: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e9d5ff;
+  margin-bottom: 8px;
 }
 .ai-config-row {
-  display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px;
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: #475569;
 }
-.ai-config-row label { width: 60px; color: #64748b; flex-shrink: 0; }
-.ai-config-row input {
-  flex: 1; padding: 4px 8px; border: 1px solid #ddd6fe; border-radius: 4px;
-  font-size: 12px; background: #fff;
+.ai-hint { font-size: 11px; color: #7c3aed; }
+.rel-panel {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
 }
-.ai-textarea {
-  width: 100%; padding: 8px 10px; border: 1px solid #e9d5ff; border-radius: 6px;
-  font-size: 12px; line-height: 1.6; resize: vertical; background: #fff; color: #334155;
+.rel-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+.rel-item { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 4px; }
+.rel-arrow { color: #94a3b8; font-size: 11px; }
+
+.uc-right { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.uc-toolbar, .canvas-note {
+  padding: 10px 14px;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
 }
-.ai-textarea:focus { outline: none; border-color: #7c3aed; box-shadow: 0 0 0 2px rgba(124,58,237,.15); }
-.ai-panel-footer { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
-.ai-hint { font-size: 10px; color: #a78bfa; }
-.btn-ai-go {
-  padding: 6px 18px; border: none; border-radius: 6px;
-  background: #7c3aed; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
+.uc-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
-.btn-ai-go:hover { background: #6d28d9; }
-.btn-ai-go:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-sm.btn-ai { color: #7c3aed; border-color: #ddd6fe; font-weight: 500; }
-.btn-sm.btn-ai:hover { background: #faf5ff; }
+.uc-toolbar-left { display: flex; align-items: center; gap: 10px; }
+.toolbar-title { font-size: 14px; font-weight: 700; color: #0f172a; }
+.toolbar-hint, .canvas-note { font-size: 12px; color: #64748b; }
+.uc-toolbar-right { display: flex; align-items: center; gap: 10px; }
+.canvas-status {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+}
+.canvas-status.ready {
+  background: #dcfce7;
+  color: #166534;
+}
+.dropdown-wrap { position: relative; display: flex; }
+.btn-export {
+  padding: 7px 12px;
+  border: 1px solid #2563eb;
+  border-right: none;
+  background: #2563eb;
+  color: #fff;
+}
+.btn-export-more {
+  padding: 7px 8px;
+  border: 1px solid #2563eb;
+  background: #1d4ed8;
+  color: #fff;
+}
+.dropdown-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 140px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
+  overflow: hidden;
+  z-index: 20;
+}
+.export-item {
+  padding: 10px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.export-item:hover { background: #f8fafc; }
+.export-divider { height: 1px; background: #e2e8f0; }
+.uc-canvas {
+  flex: 1;
+  min-height: 0;
+  background: #f1f5f9;
+}
+.render-error, .placeholder {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 14px;
+}
+.render-error { color: #b91c1c; }
+.toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 12px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+}
+.toast-success { background: #166534; }
+.toast-warn { background: #92400e; }
+.toast-error { background: #b91c1c; }
+
+@media (max-width: 1100px) {
+  .uc-page { flex-direction: column; }
+  .uc-left {
+    width: 100%;
+    min-width: 0;
+    max-height: 58vh;
+  }
+}
 </style>

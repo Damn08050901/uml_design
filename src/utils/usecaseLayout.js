@@ -1,150 +1,261 @@
 /**
- * 用例图布局算法
- * 输入: actors数组, 每个actor包含usecases数组
- * 输出: 布局后的节点和连线坐标
+ * 论文用例图布局算法（UML标准排版倾向）
+ * 1) Actor在左侧，主用例单列
+ * 2) include 与 extend 分列，减少交叉线
+ * 3) 每组Actor上下分区，保证留白
  */
 
-const ACTOR_W = 40
-const ACTOR_H = 80 // 火柴人总高度(含文字)
-const UC_RX = 85   // 用例椭圆水平半径
-const UC_RY = 26   // 用例椭圆垂直半径
-const UC_GAP_Y = 60 // 用例之间垂直间距
-const ACTOR_UC_GAP = 180 // Actor到第一列用例的水平距离
-const UC_COL_GAP = 220 // 主用例列到子用例列的水平距离
-const PADDING = 60
+const ACTOR_W = 44
+const ACTOR_H = 88
+const MAIN_UC_RX = 92
+const MAIN_UC_RY = 28
+const SUB_UC_RX = 76
+const SUB_UC_RY = 22
+const MAIN_GAP_Y = 72
+const SUB_GAP_Y = 46
+const ACTOR_TO_MAIN_GAP = 210
+const MAIN_TO_INCLUDE_GAP = 250
+const INCLUDE_TO_EXTEND_GAP = 210
+const PADDING_X = 78
+const PADDING_Y = 78
+const GROUP_GAP_Y = 120
+
+function createIdFactory() {
+  const used = new Map()
+  return (prefix, raw) => {
+    const name = String(raw ?? '')
+      .trim()
+      .replace(/\s+/g, '_')
+      .replace(/[^\w\u4e00-\u9fa5-]/g, '')
+    const base = `${prefix}_${name || 'node'}`
+    const idx = used.get(base) || 0
+    used.set(base, idx + 1)
+    return idx === 0 ? base : `${base}_${idx}`
+  }
+}
+
+function normalizeType(type) {
+  if (type === 'include' || type === 'extend') return type
+  return 'main'
+}
+
+function groupByParent(items) {
+  const map = new Map()
+  for (const item of items) {
+    const key = (item.parentUc || '').trim()
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(item)
+  }
+  return map
+}
+
+function maxNodeBottom(nodes) {
+  return Math.max(...nodes.map(n => n.y + (n.ry || ACTOR_H / 2)))
+}
+
+function minNodeTop(nodes) {
+  return Math.min(...nodes.map(n => n.y - (n.ry || ACTOR_H / 2)))
+}
 
 /**
- * 计算用例图布局
- * @param {Array} actors - [{name, usecases: [{name, type:'main'|'include'|'extend', parentUc?}]}]
- * @param {Array} relations - [{from, to, type:'association'|'include'|'extend'|'generalization'}]
- * @returns {{nodes, edges, width, height}}
+ * @param {Array} actors - [{name, usecases:[{name,type,parentUc}]}]
+ * @param {Array} relations - [{from,to,type}]
+ * @returns {{nodes:Array,edges:Array,width:number,height:number}}
  */
 export function layoutUseCase(actors, relations = []) {
   const nodes = []
   const edges = []
-  let globalY = PADDING
+  const makeId = createIdFactory()
+  let cursorY = PADDING_Y
 
   for (let ai = 0; ai < actors.length; ai++) {
     const actor = actors[ai]
-    const mainUcs = actor.usecases.filter(uc => uc.type === 'main' || !uc.type)
-    const subUcs = actor.usecases.filter(uc => uc.type === 'include' || uc.type === 'extend')
+    const actorId = makeId('actor', `${ai}_${actor.name || 'actor'}`)
 
-    // 主用例纵向排列
-    const mainStartY = globalY
-    const mainX = PADDING + ACTOR_W / 2 + ACTOR_UC_GAP
+    const normalized = (actor.usecases || []).map(uc => ({
+      ...uc,
+      name: (uc.name || '').trim(),
+      parentUc: (uc.parentUc || '').trim(),
+      type: normalizeType(uc.type)
+    })).filter(uc => uc.name)
 
-    for (let i = 0; i < mainUcs.length; i++) {
-      const uc = mainUcs[i]
-      const y = mainStartY + i * UC_GAP_Y + UC_RY
-      nodes.push({
-        id: `uc_${ai}_${uc.name}`,
+    const mainUcs = normalized.filter(uc => uc.type === 'main')
+    const includeUcs = normalized.filter(uc => uc.type === 'include')
+    const extendUcs = normalized.filter(uc => uc.type === 'extend')
+
+    // 无主用例时，给出占位，避免页面空结构导致布局崩溃
+    if (mainUcs.length === 0) {
+      mainUcs.push({ name: '核心业务', type: 'main' })
+    }
+
+    const actorX = PADDING_X + ACTOR_W / 2
+    const mainX = actorX + ACTOR_TO_MAIN_GAP
+    const includeX = mainX + MAIN_TO_INCLUDE_GAP
+    const extendX = includeX + INCLUDE_TO_EXTEND_GAP
+
+    const actorNodes = []
+    const mainNodes = []
+    const includeNodes = []
+    const extendNodes = []
+
+    // 1) 主用例单列
+    for (let mi = 0; mi < mainUcs.length; mi++) {
+      const uc = mainUcs[mi]
+      const y = cursorY + mi * MAIN_GAP_Y + MAIN_UC_RY
+      const node = {
+        id: makeId('uc', `${ai}_main_${uc.name}`),
         type: 'usecase',
         ucType: 'main',
         name: uc.name,
         x: mainX,
         y,
-        rx: UC_RX,
-        ry: UC_RY,
-        actorId: `actor_${ai}`
-      })
+        rx: MAIN_UC_RX,
+        ry: MAIN_UC_RY,
+        actorId
+      }
+      mainNodes.push(node)
+      actorNodes.push(node)
+      nodes.push(node)
     }
 
-    // 子用例(include/extend)放在更右侧，按父用例分组对齐
-    const subX = mainX + UC_COL_GAP
-    // 按parentUc分组
-    const subByParent = {}
-    for (const uc of subUcs) {
-      const key = uc.parentUc || '_none'
-      if (!subByParent[key]) subByParent[key] = []
-      subByParent[key].push(uc)
-    }
-    for (const parentName in subByParent) {
-      const subs = subByParent[parentName]
-      const parentNode = nodes.find(n => n.name === parentName && n.actorId === `actor_${ai}`)
-      const baseY = parentNode ? parentNode.y : mainStartY + UC_RY
-      for (let si = 0; si < subs.length; si++) {
-        const uc = subs[si]
-        // 子用例围绕父用例Y坐标上下分布
-        const offset = (si - (subs.length - 1) / 2) * (UC_GAP_Y * 0.7)
-        const y = baseY + offset
+    const includeByParent = groupByParent(includeUcs)
+    const extendByParent = groupByParent(extendUcs)
+    let nextIncludeY = cursorY
+    let nextExtendY = cursorY
 
-        nodes.push({
-          id: `uc_${ai}_${uc.name}`,
-          type: 'usecase',
-          ucType: uc.type,
-          name: uc.name,
-          x: subX,
-          y,
-          rx: UC_RX * 0.85,
-          ry: UC_RY * 0.85,
-          actorId: `actor_${ai}`,
-          parentUc: uc.parentUc
-        })
+    // 2) include 与 extend 分列，围绕父用例排布，并避免同列重叠
+    for (const parent of mainNodes) {
+      const includes = includeByParent.get(parent.name) || []
+      if (includes.length > 0) {
+        const desiredTop = parent.y - ((includes.length - 1) * SUB_GAP_Y) / 2
+        const startY = Math.max(desiredTop, nextIncludeY + SUB_UC_RY)
+        for (let i = 0; i < includes.length; i++) {
+          const uc = includes[i]
+          const y = startY + i * SUB_GAP_Y
+          const node = {
+            id: makeId('uc', `${ai}_include_${uc.name}`),
+            type: 'usecase',
+            ucType: 'include',
+            name: uc.name,
+            x: includeX,
+            y,
+            rx: SUB_UC_RX,
+            ry: SUB_UC_RY,
+            actorId,
+            parentUc: parent.name
+          }
+          includeNodes.push(node)
+          actorNodes.push(node)
+          nodes.push(node)
+        }
+        nextIncludeY = includeNodes[includeNodes.length - 1].y + SUB_UC_RY + 16
+      }
+
+      const extendsList = extendByParent.get(parent.name) || []
+      if (extendsList.length > 0) {
+        const desiredTop = parent.y - ((extendsList.length - 1) * SUB_GAP_Y) / 2
+        const startY = Math.max(desiredTop, nextExtendY + SUB_UC_RY)
+        for (let i = 0; i < extendsList.length; i++) {
+          const uc = extendsList[i]
+          const y = startY + i * SUB_GAP_Y
+          const node = {
+            id: makeId('uc', `${ai}_extend_${uc.name}`),
+            type: 'usecase',
+            ucType: 'extend',
+            name: uc.name,
+            x: extendX,
+            y,
+            rx: SUB_UC_RX,
+            ry: SUB_UC_RY,
+            actorId,
+            parentUc: parent.name
+          }
+          extendNodes.push(node)
+          actorNodes.push(node)
+          nodes.push(node)
+        }
+        nextExtendY = extendNodes[extendNodes.length - 1].y + SUB_UC_RY + 16
       }
     }
 
-    // Actor居中于其所有用例
-    const actorUcNodes = nodes.filter(n => n.actorId === `actor_${ai}`)
-    const minY = Math.min(...actorUcNodes.map(n => n.y))
-    const maxY = Math.max(...actorUcNodes.map(n => n.y))
-    const actorY = (minY + maxY) / 2
-
+    // 3) Actor 垂直居中
+    const minTop = minNodeTop(actorNodes)
+    const maxBottom = maxNodeBottom(actorNodes)
+    const actorY = (minTop + maxBottom) / 2
     nodes.push({
-      id: `actor_${ai}`,
+      id: actorId,
       type: 'actor',
-      name: actor.name,
-      x: PADDING + ACTOR_W / 2,
+      name: actor.name || `参与者${ai + 1}`,
+      x: actorX,
       y: actorY
     })
 
-    // 关联线: Actor → 主用例 (实线)
-    for (const ucNode of nodes.filter(n => n.ucType === 'main' && n.actorId === `actor_${ai}`)) {
+    // 4) Actor -> 主用例关联
+    for (const mainNode of mainNodes) {
       edges.push({
-        id: `e_${actor.name}_${ucNode.name}`,
-        fromId: `actor_${ai}`,
-        toId: ucNode.id,
+        id: makeId('e', `${actorId}_${mainNode.id}_assoc`),
+        fromId: actorId,
+        toId: mainNode.id,
         type: 'association'
       })
     }
 
-    // Include/Extend线: 主用例 → 子用例
-    for (const ucNode of nodes.filter(n => (n.ucType === 'include' || n.ucType === 'extend') && n.actorId === `actor_${ai}`)) {
-      const parentId = nodes.find(n => n.name === ucNode.parentUc && n.actorId === `actor_${ai}`)?.id
-      if (parentId) {
-        edges.push({
-          id: `e_${parentId}_${ucNode.id}`,
-          fromId: ucNode.ucType === 'extend' ? ucNode.id : parentId, // extend箭头反向
-          toId: ucNode.ucType === 'extend' ? parentId : ucNode.id,
-          type: ucNode.ucType
-        })
-      }
-    }
-
-    // 更新globalY
-    const allY = actorUcNodes.map(n => n.y + (n.ry || UC_RY))
-    globalY = Math.max(...allY) + UC_GAP_Y + 20
-  }
-
-  // 额外的手动关系
-  for (const rel of relations) {
-    const fromNode = nodes.find(n => n.name === rel.from)
-    const toNode = nodes.find(n => n.name === rel.to)
-    if (fromNode && toNode) {
+    // 5) include: 主用例 -> 子用例；extend: 子用例 -> 主用例
+    for (const sub of includeNodes) {
+      const parent = mainNodes.find(n => n.name === sub.parentUc)
+      if (!parent) continue
       edges.push({
-        id: `rel_${rel.from}_${rel.to}`,
-        fromId: fromNode.id,
-        toId: toNode.id,
-        type: rel.type || 'association'
+        id: makeId('e', `${parent.id}_${sub.id}_include`),
+        fromId: parent.id,
+        toId: sub.id,
+        type: 'include'
       })
     }
+    for (const sub of extendNodes) {
+      const parent = mainNodes.find(n => n.name === sub.parentUc)
+      if (!parent) continue
+      edges.push({
+        id: makeId('e', `${sub.id}_${parent.id}_extend`),
+        fromId: sub.id,
+        toId: parent.id,
+        type: 'extend'
+      })
+    }
+
+    cursorY = Math.max(maxBottom + GROUP_GAP_Y, cursorY + MAIN_GAP_Y)
   }
 
-  // 计算画布大小
-  const allNodes = nodes
-  const maxX = Math.max(...allNodes.map(n => n.x + (n.rx || ACTOR_W) + PADDING), 600)
-  const maxYAll = Math.max(...allNodes.map(n => n.y + (n.ry || ACTOR_H / 2) + PADDING), 400)
+  // 额外手动关系（跨参与者）
+  for (const rel of relations) {
+    const fromNode = nodes.find(n => n.type === 'usecase' && n.name === rel.from)
+    const toNode = nodes.find(n => n.type === 'usecase' && n.name === rel.to)
+    if (!fromNode || !toNode) continue
+    edges.push({
+      id: makeId('e', `rel_${rel.from}_${rel.to}_${rel.type || 'association'}`),
+      fromId: fromNode.id,
+      toId: toNode.id,
+      type: rel.type || 'association'
+    })
+  }
 
-  return { nodes, edges, width: maxX, height: maxYAll }
+  const maxX = Math.max(...nodes.map(n => n.x + (n.rx || ACTOR_W) + PADDING_X), 760)
+  const maxY = Math.max(...nodes.map(n => n.y + (n.ry || ACTOR_H / 2) + PADDING_Y), 520)
+
+  return { nodes, edges, width: maxX, height: maxY }
 }
 
-export const DEFAULTS = { ACTOR_W, ACTOR_H, UC_RX, UC_RY, UC_GAP_Y, ACTOR_UC_GAP, UC_COL_GAP, PADDING }
+export const DEFAULTS = {
+  ACTOR_W,
+  ACTOR_H,
+  MAIN_UC_RX,
+  MAIN_UC_RY,
+  SUB_UC_RX,
+  SUB_UC_RY,
+  MAIN_GAP_Y,
+  SUB_GAP_Y,
+  ACTOR_TO_MAIN_GAP,
+  MAIN_TO_INCLUDE_GAP,
+  INCLUDE_TO_EXTEND_GAP,
+  PADDING_X,
+  PADDING_Y
+}

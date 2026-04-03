@@ -11,8 +11,11 @@
       style="font-family:'Microsoft YaHei','SimSun',sans-serif;display:block">
 
       <defs>
-        <marker id="uc-arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
-          <polygon points="0 0, 10 3.5, 0 7" fill="none" :stroke="theme.line || '#666'" stroke-width="1"/>
+        <marker id="uc-arrow-include" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="none" :stroke="theme.includeLine || '#666'" stroke-width="1"/>
+        </marker>
+        <marker id="uc-arrow-extend" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="none" :stroke="theme.extendLine || '#666'" stroke-width="1"/>
         </marker>
         <marker id="uc-gen-arrow" markerWidth="12" markerHeight="8" refX="12" refY="4" orient="auto">
           <polygon points="0 0, 12 4, 0 8" fill="#fff" :stroke="theme.line || '#666'" stroke-width="1.2"/>
@@ -23,36 +26,36 @@
       <template v-for="e in localEdges" :key="e.id">
         <!-- 关联: 实线无箭头 -->
         <line v-if="e.type==='association'"
-          :x1="nd(e.fromId)?.x" :y1="nd(e.fromId)?.y"
-          :x2="edgeTarget(e).x" :y2="edgeTarget(e).y"
+          :x1="edgeLine(e).x1" :y1="edgeLine(e).y1"
+          :x2="edgeLine(e).x2" :y2="edgeLine(e).y2"
           :stroke="theme.line||'#555'" stroke-width="1.3"/>
 
         <!-- Include: 虚线+箭头 -->
         <template v-if="e.type==='include'">
-          <line :x1="nd(e.fromId)?.x" :y1="nd(e.fromId)?.y"
-            :x2="edgeTarget(e).x" :y2="edgeTarget(e).y"
+          <line :x1="edgeLine(e).x1" :y1="edgeLine(e).y1"
+            :x2="edgeLine(e).x2" :y2="edgeLine(e).y2"
             :stroke="theme.includeLine||'#888'" stroke-width="1.2"
-            stroke-dasharray="6,3" marker-end="url(#uc-arrow)"/>
+            stroke-dasharray="6,3" marker-end="url(#uc-arrow-include)"/>
           <text :x="edgeMid(e).x" :y="edgeMid(e).y - 6"
             text-anchor="middle" :font-size="10" :fill="theme.includeLine||'#888'"
-            font-style="italic">&lt;&lt;include&gt;&gt;</text>
+            font-style="italic" paint-order="stroke" stroke="#fff" stroke-width="3">&lt;&lt;include&gt;&gt;</text>
         </template>
 
         <!-- Extend: 虚线+箭头 -->
         <template v-if="e.type==='extend'">
-          <line :x1="nd(e.fromId)?.x" :y1="nd(e.fromId)?.y"
-            :x2="edgeTarget(e).x" :y2="edgeTarget(e).y"
+          <line :x1="edgeLine(e).x1" :y1="edgeLine(e).y1"
+            :x2="edgeLine(e).x2" :y2="edgeLine(e).y2"
             :stroke="theme.extendLine||'#9673a6'" stroke-width="1.2"
-            stroke-dasharray="6,3" marker-end="url(#uc-arrow)"/>
+            stroke-dasharray="6,3" marker-end="url(#uc-arrow-extend)"/>
           <text :x="edgeMid(e).x" :y="edgeMid(e).y - 6"
             text-anchor="middle" :font-size="10" :fill="theme.extendLine||'#9673a6'"
-            font-style="italic">&lt;&lt;extend&gt;&gt;</text>
+            font-style="italic" paint-order="stroke" stroke="#fff" stroke-width="3">&lt;&lt;extend&gt;&gt;</text>
         </template>
 
         <!-- 泛化: 实线+空心三角 -->
         <line v-if="e.type==='generalization'"
-          :x1="nd(e.fromId)?.x" :y1="nd(e.fromId)?.y"
-          :x2="edgeTarget(e).x" :y2="edgeTarget(e).y"
+          :x1="edgeLine(e).x1" :y1="edgeLine(e).y1"
+          :x2="edgeLine(e).x2" :y2="edgeLine(e).y2"
           :stroke="theme.line||'#555'" stroke-width="1.3"
           marker-end="url(#uc-gen-arrow)"/>
       </template>
@@ -63,8 +66,15 @@
         @mousedown.stop="onDragStart($event,n)" style="cursor:move">
         <ellipse :rx="n.rx" :ry="n.ry"
           :fill="ucFill(n)" :stroke="ucStroke(n)" stroke-width="1.5"/>
-        <text text-anchor="middle" dy="5" :font-size="fontSize" :fill="theme.ucText||'#333'">
-          {{ n.name }}
+        <text text-anchor="middle" :font-size="fontSize" :fill="theme.ucText||'#333'">
+          <tspan
+            v-for="(line, idx) in wrapLabel(n.name, n.ucType)"
+            :key="`${n.id}_${idx}`"
+            x="0"
+            :dy="idx===0 ? firstDy(n.name, n.ucType) : 14"
+          >
+            {{ line }}
+          </tspan>
         </text>
       </g>
 
@@ -73,15 +83,15 @@
         :transform="`translate(${n.x},${n.y})`"
         @mousedown.stop="onDragStart($event,n)" style="cursor:move">
         <!-- 头 -->
-        <circle cx="0" cy="-24" r="14" fill="none" :stroke="theme.actorStroke||'#333'" stroke-width="2.5"/>
+        <circle cx="0" cy="-24" r="13" fill="none" :stroke="theme.actorStroke||'#333'" stroke-width="2.2"/>
         <!-- 身体 -->
-        <line x1="0" y1="-10" x2="0" y2="18" :stroke="theme.actorStroke||'#333'" stroke-width="2.5"/>
+        <line x1="0" y1="-10" x2="0" y2="18" :stroke="theme.actorStroke||'#333'" stroke-width="2.2"/>
         <!-- 手臂 -->
-        <line x1="-22" y1="2" x2="22" y2="2" :stroke="theme.actorStroke||'#333'" stroke-width="2.5"/>
+        <line x1="-20" y1="2" x2="20" y2="2" :stroke="theme.actorStroke||'#333'" stroke-width="2.2"/>
         <!-- 左腿 -->
-        <line x1="0" y1="18" x2="-16" y2="40" :stroke="theme.actorStroke||'#333'" stroke-width="2.5"/>
+        <line x1="0" y1="18" x2="-15" y2="40" :stroke="theme.actorStroke||'#333'" stroke-width="2.2"/>
         <!-- 右腿 -->
-        <line x1="0" y1="18" x2="16" y2="40" :stroke="theme.actorStroke||'#333'" stroke-width="2.5"/>
+        <line x1="0" y1="18" x2="15" y2="40" :stroke="theme.actorStroke||'#333'" stroke-width="2.2"/>
         <!-- 名字 -->
         <text x="0" y="60" text-anchor="middle" :font-size="fontSize + 1" font-weight="bold"
           :fill="theme.actorText||'#333'">{{ n.name }}</text>
@@ -126,15 +136,39 @@ function nd(id) {
   return local.value.find(n => n.id === id) || { x: 0, y: 0 }
 }
 
-function edgeTarget(e) {
+function nodeRadiusX(node) {
+  if (node.type === 'usecase') return node.rx || 78
+  return 24
+}
+
+function nodeRadiusY(node) {
+  if (node.type === 'usecase') return node.ry || 24
+  return 42
+}
+
+function borderPoint(fromNode, toNode) {
+  const dx = (toNode.x || 0) - (fromNode.x || 0)
+  const dy = (toNode.y || 0) - (fromNode.y || 0)
+  const rx = nodeRadiusX(fromNode)
+  const ry = nodeRadiusY(fromNode)
+  const scale = 1 / Math.max(Math.abs(dx) / rx, Math.abs(dy) / ry, 1e-5)
+  return {
+    x: fromNode.x + dx * scale,
+    y: fromNode.y + dy * scale
+  }
+}
+
+function edgeLine(e) {
+  const from = nd(e.fromId)
   const to = nd(e.toId)
-  return { x: to.x, y: to.y }
+  const start = borderPoint(from, to)
+  const end = borderPoint(to, from)
+  return { x1: start.x, y1: start.y, x2: end.x, y2: end.y }
 }
 
 function edgeMid(e) {
-  const f = nd(e.fromId)
-  const t = nd(e.toId)
-  return { x: (f.x + t.x) / 2, y: (f.y + t.y) / 2 }
+  const ln = edgeLine(e)
+  return { x: (ln.x1 + ln.x2) / 2, y: (ln.y1 + ln.y2) / 2 }
 }
 
 function ucFill(n) {
@@ -149,17 +183,50 @@ function ucStroke(n) {
   return props.theme.ucStroke || '#6c8ebf'
 }
 
+function wrapLabel(text, ucType) {
+  const raw = String(text || '').trim()
+  if (!raw) return ['']
+  const maxChars = ucType === 'main' ? 12 : 10
+  if (raw.length <= maxChars) return [raw]
+
+  const lines = []
+  let cursor = 0
+  while (cursor < raw.length && lines.length < 3) {
+    lines.push(raw.slice(cursor, cursor + maxChars))
+    cursor += maxChars
+  }
+  if (cursor < raw.length) {
+    const last = lines[lines.length - 1]
+    lines[lines.length - 1] = `${last.slice(0, Math.max(0, last.length - 1))}…`
+  }
+  return lines
+}
+
+function firstDy(text, ucType) {
+  const count = wrapLabel(text, ucType).length
+  return count === 1 ? 5 : -(count - 1) * 7 + 5
+}
+
 // ─── 视口与缩放 ───
 const svgW = ref(800)
 const svgH = ref(600)
 const vb = ref({ x: 0, y: 0, w: 800, h: 600 })
 
+function syncViewport() {
+  if (!wrap.value) return
+  svgW.value = wrap.value.clientWidth
+  svgH.value = wrap.value.clientHeight
+  const viewW = Math.max(props.canvasWidth, svgW.value)
+  const viewH = Math.max(props.canvasHeight, svgH.value)
+  vb.value = { x: -30, y: -30, w: viewW + 60, h: viewH + 60 }
+}
+
 onMounted(() => {
-  if (wrap.value) {
-    svgW.value = wrap.value.clientWidth
-    svgH.value = wrap.value.clientHeight
-    vb.value = { x: -20, y: -20, w: svgW.value, h: svgH.value }
-  }
+  syncViewport()
+})
+
+watch([() => props.canvasWidth, () => props.canvasHeight], () => {
+  syncViewport()
 })
 
 function onWheel(e) {
@@ -220,9 +287,8 @@ function onEnd() {
   height: 100%;
   overflow: hidden;
   cursor: grab;
-  background: #fafbfc;
-  background-image: radial-gradient(circle, #e2e8f0 1px, transparent 1px);
-  background-size: 20px 20px;
+  background: #fff;
+  border-top: 1px solid #f1f5f9;
 }
 .uc-wrap:active { cursor: grabbing; }
 </style>
