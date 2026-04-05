@@ -1,0 +1,12 @@
+{
+  "version": "0.1.0",
+  "editor": {
+    "fontSize": 14,
+    "tabSize": 2,
+    "wordWrap": "on"
+  },
+  "ai": {
+    "provider": "",
+    "model": ""
+  }
+}
