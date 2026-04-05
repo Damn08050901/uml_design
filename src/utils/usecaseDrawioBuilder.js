@@ -31,6 +31,10 @@ function edgeCell({ id, value = '', style, source, target, parent = '1' }) {
   return `<mxCell id="${id}" value="${esc(value)}" style="${style}" edge="1" parent="${parent}" source="${source}" target="${target}"><mxGeometry relative="1" as="geometry"/></mxCell>`
 }
 
+export function buildUseCaseLayout({ actors, relations = [] }) {
+  return layoutUseCase(actors, relations)
+}
+
 export function buildUseCaseDrawioXml({ actors, relations = [], diagramName = '用例图' }) {
   const layout = layoutUseCase(actors, relations)
   const cells = []

@@ -1,7 +1,7 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { saveAs } from 'file-saver'
-import DrawioEmbed from './DrawioEmbed.vue'
+import UseCaseDiagram from './UseCaseDiagram.vue'
 import {
   AI_PRESETS,
   applyAiPreset,
@@ -9,7 +9,6 @@ import {
   requestAiChatCompletion,
   saveDiagramAiSettings
 } from '../utils/diagramAi.js'
-import { convertPngDataUrlToJpeg, exportPayloadToBlob } from '../utils/drawioClientExport.js'
 
 const actors = ref([
   {
@@ -39,10 +38,10 @@ const aiPrompt = ref('')
 const aiLoading = ref(false)
 const aiSettings = ref(loadDiagramAiSettings())
 
-const editorXml = ref('')
-const editorRevision = ref(0)
+const layoutData = ref(null)
+const layoutRevision = ref(0)
 const lastAppliedSignature = ref('')
-const drawioRef = ref(null)
+const canvasRef = ref(null)
 const showExportMenu = ref(false)
 const canvasReady = ref(false)
 const canvasBusy = ref(false)
@@ -54,7 +53,7 @@ const figureNo = ref(1)
 const captionTitle = ref('系统用例图')
 const jsonFileInput = ref(null)
 
-let buildUseCaseDrawioXmlFn = null
+let buildUseCaseLayoutFn = null
 
 function showToast(msg, type = 'success') {
   toast.value = { show: true, msg, type }
@@ -92,9 +91,9 @@ const allUcNames = computed(() => {
 })
 
 async function ensureBuilder() {
-  if (!buildUseCaseDrawioXmlFn) {
+  if (!buildUseCaseLayoutFn) {
     const mod = await import('../utils/usecaseDrawioBuilder.js')
-    buildUseCaseDrawioXmlFn = mod.buildUseCaseDrawioXml
+    buildUseCaseLayoutFn = mod.buildUseCaseLayout
   }
 }
 
@@ -109,12 +108,11 @@ async function applyToCanvas() {
   showExportMenu.value = false
   try {
     await ensureBuilder()
-    editorXml.value = buildUseCaseDrawioXmlFn({
+    layoutData.value = buildUseCaseLayoutFn({
       actors: actors.value,
-      relations: extraRelations.value,
-      diagramName: buildCaption()
+      relations: extraRelations.value
     })
-    editorRevision.value += 1
+    layoutRevision.value += 1
     lastAppliedSignature.value = snapshot.value
     showToast('已同步到可编辑画布')
   } catch (error) {
@@ -330,44 +328,47 @@ async function copyCaption() {
   }
 }
 
-function handleAutosave(xml) {
-  editorXml.value = xml
-}
-
 function handleCanvasReady() {
   canvasReady.value = true
 }
 
-function handleCanvasError(error) {
-  renderError.value = error.message || '用例图画布加载失败'
-  showToast(renderError.value, 'error')
+function dataUrlToBlob(dataUrl) {
+  return fetch(dataUrl).then(r => r.blob())
+}
+
+function convertPngDataUrlToJpeg(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const c = document.createElement('canvas')
+      c.width = img.width; c.height = img.height
+      const ctx = c.getContext('2d')
+      if (!ctx) { reject(new Error('JPEG 转换失败')); return }
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0)
+      resolve(c.toDataURL('image/jpeg', 0.95))
+    }
+    img.onerror = () => reject(new Error('PNG→JPEG 失败'))
+    img.src = dataUrl
+  })
 }
 
 async function exportDiagram(type) {
   showExportMenu.value = false
-  if (!drawioRef.value) {
-    showToast('画布尚未准备好', 'warn')
-    return
-  }
+  if (!canvasRef.value) { showToast('画布尚未准备好', 'warn'); return }
   try {
-    if (type === 'drawio') {
-      const xml = await drawioRef.value.exportDiagram('drawio')
-      saveAs(new Blob([xml], { type: 'application/xml' }), `${exportBaseName()}.drawio`)
-      showToast('已导出 Draw.io 文件')
-      return
+    if (type === 'svg') {
+      const svgStr = canvasRef.value.exportSvgString()
+      saveAs(new Blob([svgStr], { type: 'image/svg+xml' }), `${exportBaseName()}.svg`)
+      showToast('已导出 SVG'); return
     }
+    const pngDataUrl = await canvasRef.value.exportPngDataUrl(2)
     if (type === 'jpeg') {
-      const pngDataUrl = await drawioRef.value.exportDiagram('png')
-      const jpegDataUrl = await convertPngDataUrlToJpeg(pngDataUrl)
-      saveAs(await exportPayloadToBlob(jpegDataUrl, 'image/jpeg'), `${exportBaseName()}.jpg`)
-      showToast('已导出 JPG')
-      return
+      const jpegUrl = await convertPngDataUrlToJpeg(pngDataUrl)
+      saveAs(await dataUrlToBlob(jpegUrl), `${exportBaseName()}.jpg`)
+      showToast('已导出 JPG'); return
     }
-    const payload = await drawioRef.value.exportDiagram(type)
-    const ext = type === 'svg' ? 'svg' : 'png'
-    const mime = type === 'svg' ? 'image/svg+xml' : 'image/png'
-    saveAs(await exportPayloadToBlob(payload, mime), `${exportBaseName()}.${ext}`)
-    showToast(`已导出 ${ext.toUpperCase()}`)
+    saveAs(await dataUrlToBlob(pngDataUrl), `${exportBaseName()}.png`)
+    showToast('已导出 PNG')
   } catch (error) {
     showToast(`导出失败: ${error.message}`, 'error')
   }
@@ -375,7 +376,9 @@ async function exportDiagram(type) {
 
 watch([actors, extraRelations, chapterNo, figureNo, captionTitle], () => {}, { deep: true })
 
-await applyToCanvas()
+onMounted(() => {
+  applyToCanvas()
+})
 </script>
 
 <template>
@@ -398,7 +401,7 @@ await applyToCanvas()
 
       <div class="paper-note">
         <span class="paper-tag">最佳实践</span>
-        <span class="paper-text">左侧结构化编辑参与者和用例，右侧在 draw.io 画布里继续微调布局和连线。</span>
+        <span class="paper-text">左侧结构化编辑参与者和用例，右侧在可编辑画布里继续微调布局和连线。</span>
       </div>
 
       <div class="caption-box">
@@ -564,8 +567,6 @@ await applyToCanvas()
               <div class="export-item" @click="exportDiagram('png')">PNG</div>
               <div class="export-item" @click="exportDiagram('jpeg')">JPG</div>
               <div class="export-item" @click="exportDiagram('svg')">SVG</div>
-              <div class="export-divider"></div>
-              <div class="export-item" @click="exportDiagram('drawio')">Draw.io XML</div>
             </div>
           </div>
         </div>
@@ -577,15 +578,15 @@ await applyToCanvas()
 
       <div class="uc-canvas">
         <div v-if="renderError" class="render-error">{{ renderError }}</div>
-        <DrawioEmbed
-          v-else-if="editorXml"
-          :key="editorRevision"
-          ref="drawioRef"
-          :xml="editorXml"
-          :diagram-name="exportBaseName()"
-          @autosave="handleAutosave"
+        <UseCaseDiagram
+          v-else-if="layoutData"
+          :key="layoutRevision"
+          ref="canvasRef"
+          :nodes="layoutData.nodes"
+          :edges="layoutData.edges"
+          :canvasWidth="layoutData.width"
+          :canvasHeight="layoutData.height"
           @ready="handleCanvasReady"
-          @error="handleCanvasError"
         />
         <div v-else class="placeholder">请先在左侧生成用例结构并应用到画布</div>
       </div>

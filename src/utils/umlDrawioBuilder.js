@@ -87,23 +87,28 @@ function htmlLines(lines, options = {}) {
 function classCardHtml(item) {
   const attrs = item.attrs.length > 0 ? item.attrs : ['-']
   const methods = item.methods.length > 0 ? item.methods : ['-']
-  return [
-    `<div style="text-align:center;font-weight:700;font-size:14px;line-height:1.5;">${escHtml(item.name)}</div>`,
-    '<hr/>',
-    htmlLines(attrs),
-    '<hr/>',
-    htmlLines(methods)
-  ].join('')
+  const isAbstract = (item.stereotype || '').toLowerCase() === 'abstract'
+  const nameStyle = isAbstract
+    ? 'text-align:center;font-weight:700;font-size:14px;line-height:1.5;font-style:italic;'
+    : 'text-align:center;font-weight:700;font-size:14px;line-height:1.5;'
+  const parts = []
+  if (item.stereotype) {
+    parts.push(`<div style="text-align:center;font-size:11px;line-height:1.4;">&laquo;${escHtml(item.stereotype)}&raquo;</div>`)
+  }
+  parts.push(`<div style="${nameStyle}">${escHtml(item.name)}</div>`)
+  parts.push('<hr/>')
+  parts.push(htmlLines(attrs))
+  parts.push('<hr/>')
+  parts.push(htmlLines(methods))
+  return parts.join('')
 }
 
 function deploymentCardHtml(item) {
   const stereotype = guessDeploymentRole(item.name)
-  const items = item.items.length > 0 ? item.items : ['-']
   return [
-    `<div style="text-align:center;color:#666;font-style:italic;font-size:11px;line-height:1.4;">${escHtml(stereotype)}</div>`,
-    `<div style="text-align:center;font-weight:700;font-size:14px;line-height:1.5;">${escHtml(item.name)}</div>`,
-    htmlLines(items, { align: 'center' })
-  ].join('<br/>')
+    `<div style="text-align:center;font-style:italic;font-size:11px;line-height:1.4;">${escHtml(stereotype)}</div>`,
+    `<div style="text-align:center;font-weight:700;font-size:14px;line-height:1.5;">${escHtml(item.name)}</div>`
+  ].join('')
 }
 
 function nodeLabelHtml(label, bold = false, align = 'center') {
@@ -203,20 +208,27 @@ function parseClassSpec(spec) {
   const classes = []
   const rels = []
   for (const line of lines) {
-    const rel = line.match(/^(.+?)\s+(<\|--|\*--|o--|-->|->|--|\.{2}>)\s+(.+?)(?:\s*:\s*(.+))?$/)
+    const rel = line.match(/^(.+?)(?:\s+"([^"]*)")?(\s+)(<\|--|\.{2}\|>|\*--|o--|-->|->|--|\.{2}>)(\s+)(?:"([^"]*)"\s+)?(.+?)(?:\s*:\s*(.+))?$/)
     if (rel) {
       rels.push({
         from: rel[1].trim(),
-        op: rel[2],
-        to: rel[3].trim(),
-        label: (rel[4] || '').trim()
+        fromMult: (rel[2] || '').trim(),
+        op: rel[4],
+        toMult: (rel[6] || '').trim(),
+        to: rel[7].trim(),
+        label: (rel[8] || '').trim()
       })
       continue
     }
     if (!line.includes('|')) continue
     const parts = line.split('|')
+    let className = parts[0].trim()
+    let stereotype = ''
+    const stMatch = className.match(/^<<(.+?)>>\s*(.+)$/)
+    if (stMatch) { stereotype = stMatch[1].trim(); className = stMatch[2].trim() }
     classes.push({
-      name: parts[0].trim(),
+      name: className,
+      stereotype,
       attrs: splitList(parts[1] || ''),
       methods: splitList(parts[2] || '')
     })
@@ -241,13 +253,15 @@ function parseClassSpec(spec) {
 function createFlowNode(raw) {
   const text = raw.trim()
   if (!text) return null
+  if (/^===(.+)===$/.test(text)) return { key: text, label: text.replace(/^===|===$/g, '').trim(), type: 'forkjoin' }
   if (/^\(\((.+)\)\)$/.test(text)) return { key: text, label: text.slice(2, -2).trim(), type: 'connector' }
   if (/^\[\((.+)\)\]$/.test(text)) return { key: text, label: text.slice(2, -2).trim(), type: 'database' }
   if (/^\[\[(.+)\]\]$/.test(text)) return { key: text, label: text.slice(2, -2).trim(), type: 'subprocess' }
   if (/^\{(.+)\}$/.test(text)) return { key: text, label: text.slice(1, -1).trim(), type: 'decision' }
   if (/^\/(.+)\/$/.test(text)) return { key: text, label: text.slice(1, -1).trim(), type: 'io' }
   if (/^\((.+)\)$/.test(text)) return { key: text, label: text.slice(1, -1).trim(), type: 'terminator' }
-  if (/^(开始|结束)$/i.test(text)) return { key: text, label: text, type: 'terminator' }
+  if (/^开始$|^Start$/i.test(text)) return { key: text, label: '', type: 'start' }
+  if (/^结束$|^End$/i.test(text)) return { key: text, label: '', type: 'end' }
   if (/^\[(.+)\]$/.test(text)) return { key: text, label: text.slice(1, -1).trim(), type: 'process' }
   return { key: text, label: text, type: 'process' }
 }
@@ -416,14 +430,24 @@ function parseSequenceSpec(spec) {
       events.push({ type: 'msg', from, to, arrow: msg[2], text: msg[4].trim() })
       continue
     }
-    const alt = line.match(/^alt\s+(.+)$/i)
-    if (alt) {
-      events.push({ type: 'alt', text: alt[1].trim() })
+    const fragment = line.match(/^(alt|loop|opt|break)\s+(.+)$/i)
+    if (fragment) {
+      events.push({ type: fragment[1].toLowerCase(), text: fragment[2].trim() })
+      continue
+    }
+    const refMatch = line.match(/^ref\s+(.+)$/i)
+    if (refMatch) {
+      events.push({ type: 'ref', text: refMatch[1].trim() })
       continue
     }
     const els = line.match(/^else(?:\s+(.+))?$/i)
     if (els) {
       events.push({ type: 'else', text: (els[1] || '').trim() })
+      continue
+    }
+    const noteMatch = line.match(/^note\s+(left\s+of|right\s+of|over)\s+(.+?)\s*:\s*(.+)$/i)
+    if (noteMatch) {
+      events.push({ type: 'note', position: noteMatch[1].replace(/\s+/g, '_').toLowerCase(), participant: noteMatch[2].trim(), text: noteMatch[3].trim() })
       continue
     }
     if (/^end$/i.test(line)) {
@@ -444,14 +468,16 @@ async function buildClassDiagram(diagramName, spec) {
       measureText(attrs.join('\n'), 210, 340, 9, 46),
       measureText(methods.join('\n'), 210, 340, 9, 46)
     )
+    const stereoExtra = item.stereotype ? 20 : 0
     return {
       id: idOf('class'),
       key: item.name,
       name: item.name,
+      stereotype: item.stereotype || '',
       attrs,
       methods,
       w: width,
-      h: 78 + attrs.length * 22 + methods.length * 22
+      h: 78 + stereoExtra + attrs.length * 22 + methods.length * 22
     }
   })
   const nodeMap = new Map(nodes.map(node => [node.key, node]))
@@ -495,18 +521,25 @@ async function buildClassDiagram(diagramName, spec) {
       value: rel.label || '',
       style
     }))
+    if (rel.fromMult) {
+      xmlCells.push(`<mxCell id="${idOf('mult')}" value="${escXml(rel.fromMult)}" style="edgeLabel;html=1;align=left;verticalAlign=bottom;resizable=0;points=[];fontSize=11;fontColor=#444444;" vertex="1" connectable="0" parent="${edge.id}"><mxGeometry x="-0.8" y="10" relative="1" as="geometry"><mxPoint as="offset"/></mxGeometry></mxCell>`)
+    }
+    if (rel.toMult) {
+      xmlCells.push(`<mxCell id="${idOf('mult')}" value="${escXml(rel.toMult)}" style="edgeLabel;html=1;align=right;verticalAlign=bottom;resizable=0;points=[];fontSize=11;fontColor=#444444;" vertex="1" connectable="0" parent="${edge.id}"><mxGeometry x="0.8" y="10" relative="1" as="geometry"><mxPoint as="offset"/></mxGeometry></mxCell>`)
+    }
   }
 
   return wrapDrawioFile(diagramName, xmlCells, placed.width, placed.height)
 }
 
 function classEdgeStyle(op) {
-  if (op === '<|--') return 'endArrow=block;endFill=0;'
-  if (op === '-->') return 'endArrow=block;'
-  if (op === '->') return 'endArrow=block;'
-  if (op === '..>') return 'endArrow=open;dashed=1;dashPattern=8 6;'
-  if (op === '*--') return 'startArrow=diamondThin;startFill=1;endArrow=none;'
-  if (op === 'o--') return 'startArrow=diamondThin;startFill=0;endArrow=none;'
+  if (op === '<|--') return 'endArrow=block;endFill=0;endSize=14;'
+  if (op === '..|>') return 'endArrow=block;endFill=0;endSize=14;dashed=1;dashPattern=8 6;'
+  if (op === '-->') return 'endArrow=open;endFill=0;endSize=12;'
+  if (op === '->') return 'endArrow=open;endFill=0;endSize=12;'
+  if (op === '..>') return 'endArrow=open;endFill=0;endSize=12;dashed=1;dashPattern=8 6;'
+  if (op === '*--') return 'startArrow=diamondThin;startFill=1;startSize=14;endArrow=none;'
+  if (op === 'o--') return 'startArrow=diamondThin;startFill=0;startSize=14;endArrow=none;'
   return 'endArrow=none;'
 }
 
@@ -515,16 +548,20 @@ async function buildActivityDiagram(diagramName, spec) {
   if (parsed.nodes.length === 0 || parsed.edges.length === 0) throw new Error('请先输入流程图定义')
   const idOf = createIdFactory()
   const nodes = parsed.nodes.map(item => {
-    const width = item.type === 'connector'
-      ? 40
-      : item.type === 'decision'
-        ? Math.max(110, measureText(item.label, 110, 180, 10, 30))
-        : measureText(item.label, 120, 220, 11, 50)
-    const height = item.type === 'connector'
-      ? 40
-      : item.type === 'decision'
-        ? Math.max(84, 40 + lineCount(item.label) * 18)
-        : Math.max(54, 38 + lineCount(item.label) * 16)
+    let width, height
+    if (item.type === 'start' || item.type === 'end') {
+      width = 30; height = 30
+    } else if (item.type === 'forkjoin') {
+      width = 200; height = 8
+    } else if (item.type === 'connector') {
+      width = 40; height = 40
+    } else if (item.type === 'decision') {
+      width = Math.max(110, measureText(item.label, 110, 180, 10, 30))
+      height = Math.max(84, 40 + lineCount(item.label) * 18)
+    } else {
+      width = measureText(item.label, 120, 220, 11, 50)
+      height = Math.max(54, 38 + lineCount(item.label) * 16)
+    }
     return {
       id: idOf('flow'),
       key: item.key,
@@ -576,12 +613,15 @@ async function buildActivityDiagram(diagramName, spec) {
 }
 
 function flowNodeStyle(type) {
+  if (type === 'start') return 'shape=startState;fillColor=#000000;strokeColor=#000000;fontSize=0;'
+  if (type === 'end') return 'shape=endState;fillColor=#000000;strokeColor=#000000;fontSize=0;'
   if (type === 'terminator') return 'rounded=1;arcSize=50;align=center;verticalAlign=middle;'
   if (type === 'decision') return 'shape=rhombus;perimeter=rhombusPerimeter;align=center;verticalAlign=middle;'
   if (type === 'io') return 'shape=parallelogram;perimeter=parallelogramPerimeter;align=center;verticalAlign=middle;'
   if (type === 'database') return 'shape=cylinder;boundedLbl=1;backgroundOutline=1;align=center;verticalAlign=middle;'
   if (type === 'connector') return 'shape=ellipse;aspect=fixed;align=center;verticalAlign=middle;'
   if (type === 'subprocess') return 'shape=process;align=center;verticalAlign=middle;'
+  if (type === 'forkjoin') return 'fillColor=#000000;strokeColor=#000000;rounded=0;align=center;verticalAlign=middle;fontSize=0;'
   return 'rounded=1;arcSize=10;align=center;verticalAlign=middle;'
 }
 
@@ -589,19 +629,25 @@ async function buildDeploymentDiagram(diagramName, spec) {
   const parsed = parseNamedBlocks(spec)
   if (parsed.nodes.length < 2) throw new Error('请至少输入 2 个部署节点')
   const idOf = createIdFactory()
+  const compW = 130
+  const compH = 32
+  const compGap = 10
+  const compPadTop = 52
+  const compPadSide = 20
   const nodes = parsed.nodes.map(item => {
-    const width = Math.max(
-      measureText(item.name, 230, 320, 11, 60),
-      measureText((item.items || []).join('\n'), 230, 320, 9, 54)
-    )
-    const items = item.items.length > 0 ? item.items : ['-']
+    const items = item.items.length > 0 ? item.items : []
+    const cols = Math.min(items.length, 2)
+    const rows = Math.ceil(items.length / cols || 1)
+    const innerW = cols * compW + Math.max(0, cols - 1) * compGap
+    const width = Math.max(230, innerW + compPadSide * 2)
+    const height = compPadTop + rows * compH + Math.max(0, rows - 1) * compGap + 20
     return {
       id: idOf('deploy'),
       key: item.name,
       name: item.name,
       items,
       w: width,
-      h: 92 + items.length * 20
+      h: Math.max(100, height)
     }
   })
   const nodeMap = new Map(nodes.map(node => [node.key, node]))
@@ -629,17 +675,33 @@ async function buildDeploymentDiagram(diagramName, spec) {
       y: box.y,
       w: node.w,
       h: node.h,
-      style: `${BASE_VERTEX_STYLE}rounded=1;arcSize=12;spacing=10;verticalAlign=top;align=center;overflow=fill;fillColor=#FCFCFC;`,
+      style: `${BASE_VERTEX_STYLE}shape=cube;whiteSpace=wrap;size=10;verticalAlign=top;align=center;spacingTop=4;overflow=fill;fillColor=#FCFCFC;`,
       value: deploymentCardHtml(node)
     }))
+    const cols = Math.min(node.items.length || 1, 2)
+    for (let ci = 0; ci < node.items.length; ci++) {
+      const col = ci % cols
+      const row = Math.floor(ci / cols)
+      xmlCells.push(vertexCell({
+        id: idOf('comp'),
+        parent: node.id,
+        x: compPadSide + col * (compW + compGap),
+        y: compPadTop + row * (compH + compGap),
+        w: compW,
+        h: compH,
+        style: `${BASE_VERTEX_STYLE}shape=component;align=center;verticalAlign=middle;fontSize=12;`,
+        value: escXml(node.items[ci])
+      }))
+    }
   }
   for (const edge of edges) {
+    const labelVal = edge.label ? `&laquo;${escXml(edge.label)}&raquo;` : ''
     xmlCells.push(edgeCell({
       id: edge.id,
       source: edge.from,
       target: edge.to,
-      value: edge.label || '',
-      style: `${BASE_EDGE_STYLE}endArrow=block;strokeWidth=1.3;`
+      value: labelVal,
+      style: `${BASE_EDGE_STYLE}endArrow=open;endFill=0;dashed=1;dashPattern=8 6;strokeWidth=1.3;`
     }))
   }
   return wrapDrawioFile(diagramName, xmlCells, placed.width, placed.height)
@@ -796,14 +858,16 @@ async function buildSequenceDiagram(diagramName, spec) {
   const blocks = []
   const blockStack = []
 
+  const notes = []
+  const refs = []
   for (const event of parsed.events) {
     event.y = cursorY
     if (event.type === 'msg') {
       cursorY += 56
       continue
     }
-    if (event.type === 'alt') {
-      blockStack.push({ start: cursorY - 18, title: event.text, elseY: null, elseText: '' })
+    if (event.type === 'alt' || event.type === 'loop' || event.type === 'opt' || event.type === 'break') {
+      blockStack.push({ kind: event.type, start: cursorY - 18, title: event.text, elseY: null, elseText: '' })
       cursorY += 18
       continue
     }
@@ -813,6 +877,16 @@ async function buildSequenceDiagram(diagramName, spec) {
         blockStack[blockStack.length - 1].elseText = event.text || 'else'
       }
       cursorY += 18
+      continue
+    }
+    if (event.type === 'note') {
+      notes.push({ ...event, y: cursorY })
+      cursorY += 40
+      continue
+    }
+    if (event.type === 'ref') {
+      refs.push({ text: event.text, y: cursorY })
+      cursorY += 36
       continue
     }
     if (event.type === 'end') {
@@ -877,24 +951,55 @@ async function buildSequenceDiagram(diagramName, spec) {
   for (const block of blocks) {
     const frameX = marginX - 72
     const frameW = (parsed.participants.length - 1) * gapX + 144
+    const kindLabel = (block.kind || 'alt').toUpperCase()
     cells.push(vertexCell({
       id: idOf('frame'),
       x: frameX,
       y: block.start,
       w: frameW,
       h: Math.max(46, block.end - block.start),
-      value: `alt ${block.title}`,
+      value: `${kindLabel} [${block.title}]`,
       style: `${BASE_VERTEX_STYLE}shape=umlFrame;fillColor=none;pointerEvents=0;align=left;verticalAlign=top;spacingTop=4;spacingLeft=8;fontStyle=1;`
     }))
-    if (block.elseY) {
+    if (block.elseY && block.kind === 'alt') {
       cells.push(edgeCell({
         id: idOf('else'),
-        value: `else ${block.elseText}`,
+        value: `[${block.elseText}]`,
         style: `${BASE_EDGE_STYLE}endArrow=none;startArrow=none;dashed=1;dashPattern=8 6;strokeWidth=1.1;`,
         sourcePoint: { x: frameX, y: block.elseY },
         targetPoint: { x: frameX + frameW, y: block.elseY }
       }))
     }
+  }
+
+  for (const note of notes) {
+    const px = centerX.get(note.participant)
+    if (px == null) continue
+    const noteW = Math.max(100, measureText(note.text, 80, 180, 9, 30))
+    const noteX = note.position === 'left_of' ? px - noteW - 30 : note.position === 'right_of' ? px + 30 : px - noteW / 2
+    cells.push(vertexCell({
+      id: idOf('note'),
+      x: noteX,
+      y: note.y - 12,
+      w: noteW,
+      h: 32,
+      value: note.text,
+      style: `${BASE_VERTEX_STYLE}shape=note;size=12;fillColor=#FFFFCC;strokeColor=#999999;fontColor=#333333;fontSize=11;align=left;verticalAlign=middle;spacingLeft=6;`
+    }))
+  }
+
+  for (const ref of refs) {
+    const frameX = marginX - 40
+    const frameW = (parsed.participants.length - 1) * gapX + 80
+    cells.push(vertexCell({
+      id: idOf('ref'),
+      x: frameX,
+      y: ref.y - 8,
+      w: frameW,
+      h: 28,
+      value: `ref ${ref.text}`,
+      style: `${BASE_VERTEX_STYLE}shape=umlFrame;fillColor=#F0F0F0;pointerEvents=0;align=center;verticalAlign=middle;fontStyle=2;fontSize=11;`
+    }))
   }
 
   for (const event of parsed.events.filter(item => item.type === 'msg' && !item.arrow.includes('--'))) {
@@ -917,8 +1022,17 @@ async function buildSequenceDiagram(diagramName, spec) {
     const x2 = centerX.get(event.to)
     if (x1 == null || x2 == null) continue
     const isReturn = event.arrow.includes('--')
+    const isAsync = event.arrow.includes('>>')
     const isSelf = event.from === event.to
-    const style = `${BASE_EDGE_STYLE}${isReturn ? 'dashed=1;dashPattern=8 6;endArrow=open;' : 'endArrow=block;'}strokeWidth=1.2;`
+    let arrowStyle
+    if (isReturn) {
+      arrowStyle = 'dashed=1;dashPattern=8 6;endArrow=open;endFill=0;'
+    } else if (isAsync) {
+      arrowStyle = 'endArrow=open;endFill=0;'
+    } else {
+      arrowStyle = 'endArrow=block;endFill=1;'
+    }
+    const style = `${BASE_EDGE_STYLE}${arrowStyle}strokeWidth=1.2;`
     if (isSelf) {
       cells.push(edgeCell({
         id: idOf('msg'),
@@ -960,5 +1074,297 @@ export async function buildDiagramDrawioXml(diagramType, spec, diagramName = 'UM
   if (diagramType === 'deployment') return buildDeploymentDiagram(diagramName, spec)
   if (diagramType === 'architecture') return buildArchitectureDiagram(diagramName, spec)
   if (diagramType === 'function_structure') return buildFunctionStructureDiagram(diagramName, spec)
+  throw new Error(`暂不支持的图类型: ${diagramType}`)
+}
+
+/* ====== Layout builders (for UmlCanvas) ====== */
+
+function classEdgeLayoutStyle(op) {
+  if (op === '<|--') return { arrowEnd: 'blockEmpty', dashed: false }
+  if (op === '..|>') return { arrowEnd: 'blockEmpty', dashed: true }
+  if (op === '-->') return { arrowEnd: 'open', dashed: false }
+  if (op === '->') return { arrowEnd: 'open', dashed: false }
+  if (op === '..>') return { arrowEnd: 'open', dashed: true }
+  if (op === '*--') return { arrowStart: 'diamond', arrowEnd: 'none', dashed: false }
+  if (op === 'o--') return { arrowStart: 'diamondEmpty', arrowEnd: 'none', dashed: false }
+  return { arrowEnd: 'none', dashed: false }
+}
+
+async function buildClassLayout(spec) {
+  const parsed = parseClassSpec(spec)
+  const idOf = createIdFactory()
+  const nodes = parsed.classes.map(item => {
+    const attrs = item.attrs.length > 0 ? item.attrs : ['-']
+    const methods = item.methods.length > 0 ? item.methods : ['-']
+    const width = Math.max(
+      measureText(item.name, 210, 340, 11, 60),
+      measureText(attrs.join('\n'), 210, 340, 9, 46),
+      measureText(methods.join('\n'), 210, 340, 9, 46)
+    )
+    const stereoExtra = item.stereotype ? 20 : 0
+    return {
+      id: idOf('class'), key: item.name, name: item.name,
+      stereotype: item.stereotype || '', attrs, methods,
+      w: width, h: 78 + stereoExtra + attrs.length * 22 + methods.length * 22
+    }
+  })
+  const nodeMap = new Map(nodes.map(n => [n.key, n]))
+  const edges = parsed.relations
+    .filter(r => nodeMap.has(r.from) && nodeMap.has(r.to))
+    .map(r => ({ id: idOf('edge'), from: nodeMap.get(r.from).id, to: nodeMap.get(r.to).id, raw: r }))
+  const placed = await elkLayout(nodes, edges, { direction: 'RIGHT', nodeSpacing: 120, layerSpacing: 200, componentSpacing: 160 })
+  return {
+    nodes: nodes.map(n => {
+      const box = placed.nodes.get(n.id) || { ...n, x: 80, y: 80 }
+      return { id: n.id, x: box.x, y: box.y, w: n.w, h: n.h, shape: 'classBox', label: n.name, stereotype: n.stereotype,
+        compartments: [{ items: n.attrs }, { items: n.methods }] }
+    }),
+    edges: edges.map(e => ({
+      id: e.id, from: e.from, to: e.to, label: e.raw.label || '',
+      fromLabel: e.raw.fromMult || '', toLabel: e.raw.toMult || '',
+      style: { strokeWidth: 1.4, ...classEdgeLayoutStyle(e.raw.op) }
+    })),
+    width: placed.width, height: placed.height
+  }
+}
+
+function flowShapeMap(type) {
+  if (type === 'start') return 'startState'
+  if (type === 'end') return 'endState'
+  if (type === 'decision') return 'diamond'
+  if (type === 'forkjoin') return 'forkjoin'
+  if (type === 'connector') return 'ellipse'
+  if (type === 'database') return 'cylinder'
+  if (type === 'terminator') return 'roundedRect'
+  if (type === 'io') return 'roundedRect'
+  if (type === 'subprocess') return 'rect'
+  return 'roundedRect'
+}
+
+async function buildActivityLayout(spec) {
+  const parsed = parseActivitySpec(spec)
+  if (parsed.nodes.length === 0 || parsed.edges.length === 0) throw new Error('请先输入流程图定义')
+  const idOf = createIdFactory()
+  const nodes = parsed.nodes.map(item => {
+    let w, h
+    if (item.type === 'start' || item.type === 'end') { w = 30; h = 30 }
+    else if (item.type === 'forkjoin') { w = 200; h = 8 }
+    else if (item.type === 'connector') { w = 40; h = 40 }
+    else if (item.type === 'decision') { w = Math.max(110, measureText(item.label, 110, 180, 10, 30)); h = Math.max(84, 40 + lineCount(item.label) * 18) }
+    else { w = measureText(item.label, 120, 220, 11, 50); h = Math.max(54, 38 + lineCount(item.label) * 16) }
+    return { id: idOf('flow'), key: item.key, label: item.label, type: item.type, w, h }
+  })
+  const nodeMap = new Map(nodes.map(n => [n.key, n]))
+  const edges = parsed.edges.filter(e => nodeMap.has(e.from) && nodeMap.has(e.to))
+    .map(e => ({ id: idOf('edge'), from: nodeMap.get(e.from).id, to: nodeMap.get(e.to).id, label: e.label }))
+  const placed = await elkLayout(nodes, edges, { direction: 'DOWN', nodeSpacing: 100, layerSpacing: 130, componentSpacing: 130 })
+  return {
+    nodes: nodes.map(n => {
+      const box = placed.nodes.get(n.id) || { ...n, x: 80, y: 80 }
+      return { id: n.id, x: box.x, y: box.y, w: n.w, h: n.h, shape: flowShapeMap(n.type), label: n.label }
+    }),
+    edges: edges.map(e => ({
+      id: e.id, from: e.from, to: e.to, label: e.label || '',
+      style: { arrowEnd: 'block', strokeWidth: 1.3 }
+    })),
+    width: placed.width, height: placed.height
+  }
+}
+
+async function buildDeploymentLayout(spec) {
+  const parsed = parseNamedBlocks(spec)
+  if (parsed.nodes.length < 2) throw new Error('请至少输入 2 个部署节点')
+  const idOf = createIdFactory()
+  const compW = 130, compH = 32, compGap = 10, compPadTop = 52, compPadSide = 20
+  const nodes = parsed.nodes.map(item => {
+    const items = item.items.length > 0 ? item.items : []
+    const cols = Math.min(items.length, 2)
+    const rows = Math.ceil(items.length / cols || 1)
+    const innerW = cols * compW + Math.max(0, cols - 1) * compGap
+    const width = Math.max(230, innerW + compPadSide * 2)
+    const height = Math.max(100, compPadTop + rows * compH + Math.max(0, rows - 1) * compGap + 20)
+    const children = items.map((name, ci) => {
+      const col = ci % cols, row = Math.floor(ci / cols)
+      return { label: name, x: compPadSide + col * (compW + compGap), y: compPadTop + row * (compH + compGap), w: compW, h: compH }
+    })
+    return { id: idOf('deploy'), key: item.name, name: item.name, w: width, h: height, children }
+  })
+  const nodeMap = new Map(nodes.map(n => [n.key, n]))
+  const edges = parsed.edges.filter(e => nodeMap.has(e.from) && nodeMap.has(e.to))
+    .map(e => ({ id: idOf('edge'), from: nodeMap.get(e.from).id, to: nodeMap.get(e.to).id, label: e.label }))
+  const placed = await elkLayout(nodes, edges, { direction: 'RIGHT', nodeSpacing: 120, layerSpacing: 180, componentSpacing: 140 })
+  return {
+    nodes: nodes.map(n => {
+      const box = placed.nodes.get(n.id) || { ...n, x: 80, y: 80 }
+      return { id: n.id, x: box.x, y: box.y, w: n.w, h: n.h, shape: 'cube', label: n.name,
+        stereotype: guessDeploymentRole(n.name), children: n.children }
+    }),
+    edges: edges.map(e => ({
+      id: e.id, from: e.from, to: e.to, label: e.label ? `«${e.label}»` : '',
+      labelItalic: true, style: { arrowEnd: 'open', dashed: true, strokeWidth: 1.3 }
+    })),
+    width: placed.width, height: placed.height
+  }
+}
+
+function buildArchitectureLayout(spec) {
+  const parsed = parseArchitectureSpec(spec)
+  if (parsed.layers.length === 0) throw new Error('请先定义架构分层')
+  const idOf = createIdFactory()
+  const itemWidth = 170, itemHeight = 56, itemGap = 48
+  const lanePadding = 24, laneTop = 48, laneHeight = 136
+  const marginX = 90, marginY = 72
+  const maxItems = Math.max(...parsed.layers.map(l => Math.max(1, l.items.length)))
+  const laneWidth = Math.max(960, maxItems * itemWidth + Math.max(0, maxItems - 1) * itemGap + lanePadding * 2)
+  const itemIds = new Map()
+  const allNodes = []
+  let pageHeight = marginY
+  for (let i = 0; i < parsed.layers.length; i++) {
+    const layer = parsed.layers[i]
+    const y = marginY + i * (laneHeight + 20)
+    const items = layer.items.length > 0 ? layer.items : ['-']
+    const totalWidth = items.length * itemWidth + Math.max(0, items.length - 1) * itemGap
+    const startX = Math.max(lanePadding, Math.floor((laneWidth - totalWidth) / 2))
+    const children = items.map((name, j) => {
+      const cid = idOf('module')
+      itemIds.set(name, cid)
+      return { id: cid, label: name, x: startX + j * (itemWidth + itemGap), y: laneTop, w: itemWidth, h: itemHeight }
+    })
+    allNodes.push({ id: idOf('lane'), x: marginX, y, w: laneWidth, h: laneHeight, shape: 'swimlane', label: layer.name, children })
+    pageHeight = y + laneHeight + marginY
+  }
+  const rels = parsed.edges.length > 0 ? parsed.edges : buildDefaultArchitectureEdges(parsed.layers)
+  const layoutEdges = []
+  for (const edge of rels) {
+    const sid = itemIds.get(edge.from), tid = itemIds.get(edge.to)
+    if (!sid || !tid) continue
+    const sNode = allNodes.flatMap(n => n.children || []).find(c => c.id === sid)
+    const tNode = allNodes.flatMap(n => n.children || []).find(c => c.id === tid)
+    const sParent = allNodes.find(n => (n.children || []).some(c => c.id === sid))
+    const tParent = allNodes.find(n => (n.children || []).some(c => c.id === tid))
+    if (sNode && tNode && sParent && tParent) {
+      layoutEdges.push({
+        id: idOf('edge'), label: edge.label || '',
+        style: { arrowEnd: 'block', strokeWidth: 1.3 },
+        sourcePoint: { x: sParent.x + sNode.x + sNode.w / 2, y: sParent.y + sNode.y + sNode.h },
+        targetPoint: { x: tParent.x + tNode.x + tNode.w / 2, y: tParent.y + tNode.y }
+      })
+    }
+  }
+  return { nodes: allNodes, edges: layoutEdges, width: laneWidth + marginX * 2, height: pageHeight }
+}
+
+async function buildFunctionStructureLayout(spec) {
+  const parsed = parseFunctionStructureSpec(spec)
+  if (parsed.nodes.length === 0) throw new Error('请先输入功能结构定义')
+  const idOf = createIdFactory()
+  const nodes = parsed.nodes.map(name => ({
+    id: idOf('func'), key: name, name, w: measureText(name, 136, 240, 11, 48), h: 54
+  }))
+  const nodeMap = new Map(nodes.map(n => [n.key, n]))
+  const edges = parsed.edges.filter(e => nodeMap.has(e.from) && nodeMap.has(e.to))
+    .map(e => ({ id: idOf('edge'), from: nodeMap.get(e.from).id, to: nodeMap.get(e.to).id, label: e.label }))
+  const placed = await elkLayout(nodes, edges, { direction: 'DOWN', nodeSpacing: 80, layerSpacing: 140, componentSpacing: 120 })
+  return {
+    nodes: nodes.map(n => {
+      const box = placed.nodes.get(n.id) || { ...n, x: 80, y: 80 }
+      return { id: n.id, x: box.x, y: box.y, w: n.w, h: n.h, shape: 'roundedRect', label: n.name, style: { fontWeight: 'bold' } }
+    }),
+    edges: edges.map(e => ({
+      id: e.id, from: e.from, to: e.to, label: e.label || '',
+      style: { arrowEnd: 'none', strokeWidth: 1.2 }
+    })),
+    width: placed.width, height: placed.height
+  }
+}
+
+function buildSequenceLayout(spec) {
+  const parsed = parseSequenceSpec(spec)
+  if (parsed.participants.length < 2) throw new Error('请至少定义 2 个参与者')
+  const idOf = createIdFactory()
+  const centerX = new Map()
+  const marginX = 110, gapX = 220, actorY = 30, headerY = 44, lifelineTop = 136
+  let cursorY = 170
+  const blocks = [], blockStack = [], notes = [], refs = []
+  for (const event of parsed.events) {
+    event.y = cursorY
+    if (event.type === 'msg') { cursorY += 56; continue }
+    if (['alt','loop','opt','break'].includes(event.type)) { blockStack.push({ kind: event.type, start: cursorY - 18, title: event.text, elseY: null, elseText: '' }); cursorY += 18; continue }
+    if (event.type === 'else') { if (blockStack.length > 0) { blockStack[blockStack.length-1].elseY = cursorY - 8; blockStack[blockStack.length-1].elseText = event.text || 'else' } cursorY += 18; continue }
+    if (event.type === 'note') { notes.push({ ...event, y: cursorY }); cursorY += 40; continue }
+    if (event.type === 'ref') { refs.push({ text: event.text, y: cursorY }); cursorY += 36; continue }
+    if (event.type === 'end') { if (blockStack.length > 0) { const b = blockStack.pop(); b.end = cursorY + 8; blocks.push(b) } cursorY += 10 }
+  }
+  while (blockStack.length > 0) { const b = blockStack.pop(); b.end = cursorY + 8; blocks.push(b) }
+  const totalWidth = marginX * 2 + gapX * (parsed.participants.length - 1)
+  const pageHeight = Math.max(520, cursorY + 110)
+  const allNodes = [], allEdges = []
+  for (let i = 0; i < parsed.participants.length; i++) {
+    const p = parsed.participants[i]
+    const x = marginX + i * gapX
+    centerX.set(p.name, x)
+    if (p.type === 'actor') {
+      const w = Math.max(56, measureText(p.name, 56, 90, 10, 24))
+      allNodes.push({ id: idOf('part'), x: x - w / 2, y: actorY, w, h: 88, shape: 'actor', label: p.name })
+    } else {
+      const w = Math.max(120, measureText(p.name, 120, 180, 11, 40))
+      const h = p.type === 'database' ? 54 : 40
+      const shape = p.type === 'database' ? 'cylinder' : 'roundedRect'
+      allNodes.push({ id: idOf('part'), x: x - w / 2, y: headerY, w, h, shape, label: p.name, style: { fontWeight: 'bold' } })
+    }
+    allNodes.push({ id: idOf('life'), x, y: lifelineTop, w: 1, h: pageHeight - lifelineTop - 40, shape: 'lifeline', label: '' })
+  }
+  for (const block of blocks) {
+    const fx = marginX - 72, fw = (parsed.participants.length - 1) * gapX + 144
+    allNodes.push({ id: idOf('frame'), x: fx, y: block.start, w: fw, h: Math.max(46, block.end - block.start), shape: 'frame', label: `${(block.kind||'alt').toUpperCase()} [${block.title}]` })
+    if (block.elseY && block.kind === 'alt') {
+      allEdges.push({ id: idOf('else'), label: `[${block.elseText}]`, labelItalic: true,
+        sourcePoint: { x: fx, y: block.elseY }, targetPoint: { x: fx + fw, y: block.elseY },
+        style: { dashed: true, arrowEnd: 'none', strokeWidth: 1.1 } })
+    }
+  }
+  for (const note of notes) {
+    const px = centerX.get(note.participant); if (px == null) continue
+    const nw = Math.max(100, measureText(note.text, 80, 180, 9, 30))
+    const nx = note.position === 'left_of' ? px - nw - 30 : note.position === 'right_of' ? px + 30 : px - nw / 2
+    allNodes.push({ id: idOf('note'), x: nx, y: note.y - 12, w: nw, h: 32, shape: 'note', label: note.text })
+  }
+  for (const ref of refs) {
+    const fx = marginX - 40, fw = (parsed.participants.length - 1) * gapX + 80
+    allNodes.push({ id: idOf('ref'), x: fx, y: ref.y - 8, w: fw, h: 28, shape: 'frame', label: `ref ${ref.text}`, style: { fill: '#f0f0f0', fontSize: 11 } })
+  }
+  for (const event of parsed.events.filter(e => e.type === 'msg' && !e.arrow.includes('--'))) {
+    const x = centerX.get(event.to); if (x == null) continue
+    const h = event.from === event.to ? 38 : 28
+    allNodes.push({ id: idOf('act'), x: x - 8, y: event.y - 10, w: 16, h, shape: 'rect', label: '', style: { fill: '#fff', stroke: '#111', strokeWidth: 1.1 } })
+  }
+  for (const event of parsed.events.filter(e => e.type === 'msg')) {
+    const x1 = centerX.get(event.from), x2 = centerX.get(event.to)
+    if (x1 == null || x2 == null) continue
+    const isReturn = event.arrow.includes('--'), isAsync = event.arrow.includes('>>')
+    const isSelf = event.from === event.to
+    let arrowEnd = 'block'; let dashed = false
+    if (isReturn) { arrowEnd = 'open'; dashed = true } else if (isAsync) { arrowEnd = 'open' }
+    if (isSelf) {
+      allEdges.push({ id: idOf('msg'), label: event.text,
+        sourcePoint: { x: x1, y: event.y }, targetPoint: { x: x1, y: event.y + 24 },
+        points: [{ x: x1 + 42, y: event.y }, { x: x1 + 42, y: event.y + 24 }],
+        style: { arrowEnd, dashed, strokeWidth: 1.2 } })
+    } else {
+      allEdges.push({ id: idOf('msg'), label: event.text,
+        sourcePoint: { x: x1, y: event.y }, targetPoint: { x: x2, y: event.y },
+        style: { arrowEnd, dashed, strokeWidth: 1.2 } })
+    }
+  }
+  return { nodes: allNodes, edges: allEdges, width: totalWidth + 160, height: pageHeight + 20 }
+}
+
+export async function buildDiagramLayout(diagramType, spec) {
+  if (diagramType === 'class') return buildClassLayout(spec)
+  if (diagramType === 'sequence') return buildSequenceLayout(spec)
+  if (diagramType === 'activity') return buildActivityLayout(spec)
+  if (diagramType === 'deployment') return buildDeploymentLayout(spec)
+  if (diagramType === 'architecture') return buildArchitectureLayout(spec)
+  if (diagramType === 'function_structure') return buildFunctionStructureLayout(spec)
   throw new Error(`暂不支持的图类型: ${diagramType}`)
 }

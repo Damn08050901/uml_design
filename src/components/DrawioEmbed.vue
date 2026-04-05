@@ -14,8 +14,19 @@ const isBusy = ref(true)
 const currentXml = ref(props.xml)
 let pendingExport = null
 
+const DRAWIO_HIDE_CSS = [
+  '.geSidebarContainer { display:none !important; width:0 !important; }',
+  '.geFormatContainer { display:none !important; width:0 !important; }',
+  '.geFooterContainer { display:none !important; }',
+  '.geMenubarContainer { display:none !important; height:0 !important; }',
+  '.geToolbarContainer { display:none !important; height:0 !important; }',
+  '.mxWindow { display:none !important; }',
+  '.geEditor > .geDefaultLayout > div:first-child { left:0 !important; right:0 !important; top:0 !important; bottom:0 !important; }',
+  '.geDiagramContainer { left:0 !important; right:0 !important; top:0 !important; bottom:0 !important; }',
+].join(' ')
+
 const iframeSrc = computed(() => {
-  return 'https://embed.diagrams.net/?embed=1&proto=json&spin=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1&libraries=1&configure=0'
+  return 'https://embed.diagrams.net/?embed=1&proto=json&spin=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1&libraries=0&configure=1&ui=min&grid=1&nav=1'
 })
 
 function parseMessage(payload) {
@@ -41,6 +52,17 @@ function handleMessage(event) {
   if (!isDrawioOrigin(event.origin)) return
   const data = parseMessage(event.data)
   if (!data || !data.event) return
+
+  if (data.event === 'configure') {
+    postEditor({
+      action: 'configure',
+      config: {
+        css: DRAWIO_HIDE_CSS,
+        compressXml: false
+      }
+    })
+    return
+  }
 
   if (data.event === 'init') {
     isReady.value = true

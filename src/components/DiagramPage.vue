@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { saveAs } from 'file-saver'
-import DrawioEmbed from './DrawioEmbed.vue'
+import UmlCanvas from './UmlCanvas.vue'
 import { UML_TEMPLATES } from '../utils/diagramTemplates.js'
 import {
   AI_PRESETS,
@@ -22,9 +22,9 @@ const props = defineProps({
 
 const spec = ref('')
 const lastAppliedSpec = ref('')
-const editorXml = ref('')
-const editorRevision = ref(0)
-const drawioRef = ref(null)
+const layoutData = ref(null)
+const layoutRevision = ref(0)
+const canvasRef = ref(null)
 const showExportMenu = ref(false)
 const toast = ref({ show: false, msg: '', type: 'success' })
 const renderError = ref('')
@@ -40,7 +40,7 @@ const showAiConfig = ref(false)
 const aiPrompt = ref('')
 const aiLoading = ref(false)
 const aiSettings = ref(loadDiagramAiSettings())
-let buildDiagramDrawioXmlFn = null
+let buildDiagramLayoutFn = null
 
 function showToast(msg, type = 'success') {
   toast.value = { show: true, msg, type }
@@ -79,13 +79,12 @@ async function applyToCanvas() {
   renderError.value = ''
   showExportMenu.value = false
   try {
-    if (!buildDiagramDrawioXmlFn) {
+    if (!buildDiagramLayoutFn) {
       const mod = await import('../utils/umlDrawioBuilder.js')
-      buildDiagramDrawioXmlFn = mod.buildDiagramDrawioXml
+      buildDiagramLayoutFn = mod.buildDiagramLayout
     }
-    const xml = await buildDiagramDrawioXmlFn(props.diagramType, spec.value, buildCaption())
-    editorXml.value = xml
-    editorRevision.value += 1
+    layoutData.value = await buildDiagramLayoutFn(props.diagramType, spec.value)
+    layoutRevision.value += 1
     lastAppliedSpec.value = spec.value
     showToast('已同步到可编辑画布')
   } catch (error) {
@@ -143,77 +142,47 @@ async function aiGenerate() {
   }
 }
 
-function handleAutosave(xml) {
-  editorXml.value = xml
-}
-
 function handleCanvasReady() {
   canvasReady.value = true
 }
 
-function handleCanvasError(error) {
-  renderError.value = error.message || '画布加载失败'
-  showToast(renderError.value, 'error')
-}
-
-async function dataUrlToBlob(dataUrl) {
-  const response = await fetch(dataUrl)
-  return response.blob()
-}
-
-async function exportPayloadToBlob(payload, fallbackMime) {
-  const text = String(payload || '')
-  if (text.startsWith('data:')) return dataUrlToBlob(text)
-  return new Blob([text], { type: fallbackMime })
+function dataUrlToBlob(dataUrl) {
+  return fetch(dataUrl).then(r => r.blob())
 }
 
 function convertPngDataUrlToJpeg(dataUrl) {
   return new Promise((resolve, reject) => {
     const image = new Image()
     image.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = image.width
-      canvas.height = image.height
-      const ctx = canvas.getContext('2d')
-      if (!ctx) {
-        reject(new Error('浏览器不支持 JPEG 转换'))
-        return
-      }
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-      ctx.drawImage(image, 0, 0)
-      resolve(canvas.toDataURL('image/jpeg', 0.95))
+      const c = document.createElement('canvas')
+      c.width = image.width; c.height = image.height
+      const ctx = c.getContext('2d')
+      if (!ctx) { reject(new Error('JPEG 转换失败')); return }
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(image, 0, 0)
+      resolve(c.toDataURL('image/jpeg', 0.95))
     }
-    image.onerror = () => reject(new Error('PNG 转换 JPEG 失败'))
+    image.onerror = () => reject(new Error('PNG→JPEG 失败'))
     image.src = dataUrl
   })
 }
 
 async function exportDiagram(type) {
   showExportMenu.value = false
-  if (!drawioRef.value) {
-    showToast('画布尚未准备好', 'warn')
-    return
-  }
+  if (!canvasRef.value) { showToast('画布尚未准备好', 'warn'); return }
   try {
-    if (type === 'drawio') {
-      const xml = await drawioRef.value.exportDiagram('drawio')
-      saveAs(new Blob([xml], { type: 'application/xml' }), `${exportBaseName()}.drawio`)
-      showToast('已导出 draw.io 文件')
-      return
+    if (type === 'svg') {
+      const svgStr = canvasRef.value.exportSvgString()
+      saveAs(new Blob([svgStr], { type: 'image/svg+xml' }), `${exportBaseName()}.svg`)
+      showToast('已导出 SVG'); return
     }
+    const pngDataUrl = await canvasRef.value.exportPngDataUrl(2)
     if (type === 'jpeg') {
-      const pngDataUrl = await drawioRef.value.exportDiagram('png')
-      const jpegDataUrl = await convertPngDataUrlToJpeg(pngDataUrl)
-      saveAs(await dataUrlToBlob(jpegDataUrl), `${exportBaseName()}.jpg`)
-      showToast('已导出 JPG')
-      return
+      const jpegUrl = await convertPngDataUrlToJpeg(pngDataUrl)
+      saveAs(await dataUrlToBlob(jpegUrl), `${exportBaseName()}.jpg`)
+      showToast('已导出 JPG'); return
     }
-    const dataUrl = await drawioRef.value.exportDiagram(type)
-    const ext = type === 'svg' ? 'svg' : 'png'
-    const mime = type === 'svg' ? 'image/svg+xml' : 'image/png'
-    saveAs(await exportPayloadToBlob(dataUrl, mime), `${exportBaseName()}.${ext}`)
-    showToast(`已导出 ${ext.toUpperCase()}`)
+    saveAs(await dataUrlToBlob(pngDataUrl), `${exportBaseName()}.png`)
+    showToast('已导出 PNG')
   } catch (error) {
     showToast(`导出失败: ${error.message}`, 'error')
   }
@@ -241,8 +210,9 @@ watch(() => props.diagramType, async () => {
 
       <div class="paper-note">
         <span class="paper-tag">最佳实践</span>
-        <span class="paper-text">画布使用 draw.io 编辑能力，初始排版按自动布局生成，再支持自由拖拽微调。</span>
+        <span class="paper-text">初始排版按自动布局生成，支持自由拖拽微调。</span>
       </div>
+
 
       <div class="caption-box">
         <div class="caption-row">
@@ -342,28 +312,26 @@ watch(() => props.diagramType, async () => {
               <div class="export-item" @click="exportDiagram('png')">PNG</div>
               <div class="export-item" @click="exportDiagram('jpeg')">JPG</div>
               <div class="export-item" @click="exportDiagram('svg')">SVG</div>
-              <div class="export-divider"></div>
-              <div class="export-item" @click="exportDiagram('drawio')">Draw.io XML</div>
             </div>
           </div>
         </div>
       </div>
 
       <div class="canvas-note">
-        <span>支持缩放、分组、连接点、自动对齐、图形库与原生 draw.io 画布操作。</span>
+        <span>支持缩放、拖拽、连接点、自动对齐，图形库与原生画布操作。</span>
       </div>
 
       <div class="diagram-canvas">
         <div v-if="renderError" class="render-error">{{ renderError }}</div>
-        <DrawioEmbed
-          v-else-if="editorXml"
-          :key="editorRevision"
-          ref="drawioRef"
-          :xml="editorXml"
-          :diagram-name="exportBaseName()"
-          @autosave="handleAutosave"
+        <UmlCanvas
+          v-else-if="layoutData"
+          :key="layoutRevision"
+          ref="canvasRef"
+          :nodes="layoutData.nodes"
+          :edges="layoutData.edges"
+          :width="layoutData.width"
+          :height="layoutData.height"
           @ready="handleCanvasReady"
-          @error="handleCanvasError"
         />
         <div v-else class="placeholder">请输入内容并应用到画布</div>
       </div>

@@ -1,9 +1,16 @@
 <template>
-  <div class="uc-wrap" ref="wrap"
+  <div class="uc-wrap" :class="{fullscreen: isFullscreen}" ref="wrap"
     @wheel.prevent="onWheel"
     @mousedown="onPanStart"
     @mousemove="onMove"
     @mouseup="onEnd" @mouseleave="onEnd">
+
+    <div class="zoom-controls">
+      <button class="zoom-btn" @click.stop="zoomIn" title="放大">＋</button>
+      <button class="zoom-btn" @click.stop="zoomOut" title="缩小">－</button>
+      <button class="zoom-btn" @click.stop="fitView" title="适应画布">⊡</button>
+      <button class="zoom-btn" @click.stop="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'">{{ isFullscreen ? '⊠' : '⛶' }}</button>
+    </div>
 
     <svg ref="svgEl" :width="svgW" :height="svgH"
       :viewBox="`${vb.x} ${vb.y} ${vb.w} ${vb.h}`"
@@ -102,7 +109,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, defineExpose } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 
 const props = defineProps({
   nodes: { type: Array, default: () => [] },
@@ -113,9 +120,11 @@ const props = defineProps({
   fontSize: { type: Number, default: 13 }
 })
 
+const emit = defineEmits(['ready'])
+
 const wrap = ref(null)
 const svgEl = ref(null)
-defineExpose({ svgEl })
+const isFullscreen = ref(false)
 
 // 本地可拖拽副本
 const local = ref([])
@@ -212,21 +221,83 @@ const svgW = ref(800)
 const svgH = ref(600)
 const vb = ref({ x: 0, y: 0, w: 800, h: 600 })
 
-function syncViewport() {
+function updateSize() {
   if (!wrap.value) return
-  svgW.value = wrap.value.clientWidth
-  svgH.value = wrap.value.clientHeight
-  const viewW = Math.max(props.canvasWidth, svgW.value)
-  const viewH = Math.max(props.canvasHeight, svgH.value)
-  vb.value = { x: -30, y: -30, w: viewW + 60, h: viewH + 60 }
+  svgW.value = wrap.value.clientWidth || 800
+  svgH.value = wrap.value.clientHeight || 600
+}
+
+function fitView() {
+  if (!local.value.length) return
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const n of local.value) {
+    if (n.type === 'actor') {
+      minX = Math.min(minX, n.x - 30)
+      minY = Math.min(minY, n.y - 42)
+      maxX = Math.max(maxX, n.x + 30)
+      maxY = Math.max(maxY, n.y + 70)
+    } else {
+      const rx = n.rx || 78, ry = n.ry || 24
+      minX = Math.min(minX, n.x - rx)
+      minY = Math.min(minY, n.y - ry)
+      maxX = Math.max(maxX, n.x + rx)
+      maxY = Math.max(maxY, n.y + ry)
+    }
+  }
+  const pad = 80
+  const cw = maxX - minX + pad * 2
+  const ch = maxY - minY + pad * 2
+  const aspect = (svgW.value || 800) / (svgH.value || 600)
+  let w = cw, h = ch
+  if (w / h > aspect) h = w / aspect
+  else w = h * aspect
+  vb.value = {
+    x: minX - pad - (w - cw) / 2,
+    y: minY - pad - (h - ch) / 2,
+    w, h
+  }
+}
+
+function zoomIn() {
+  const cx = vb.value.x + vb.value.w / 2
+  const cy = vb.value.y + vb.value.h / 2
+  vb.value.w *= 0.8; vb.value.h *= 0.8
+  vb.value.x = cx - vb.value.w / 2
+  vb.value.y = cy - vb.value.h / 2
+}
+
+function zoomOut() {
+  const cx = vb.value.x + vb.value.w / 2
+  const cy = vb.value.y + vb.value.h / 2
+  vb.value.w *= 1.25; vb.value.h *= 1.25
+  vb.value.x = cx - vb.value.w / 2
+  vb.value.y = cy - vb.value.h / 2
+}
+
+function toggleFullscreen() {
+  isFullscreen.value = !isFullscreen.value
+  nextTick(() => { updateSize(); fitView() })
+}
+
+function onKeydown(e) {
+  if (e.key === 'Escape' && isFullscreen.value) isFullscreen.value = false
 }
 
 onMounted(() => {
-  syncViewport()
+  updateSize()
+  fitView()
+  window.addEventListener('resize', updateSize)
+  document.addEventListener('keydown', onKeydown)
+  emit('ready')
 })
 
-watch([() => props.canvasWidth, () => props.canvasHeight], () => {
-  syncViewport()
+onUnmounted(() => {
+  window.removeEventListener('resize', updateSize)
+  document.removeEventListener('keydown', onKeydown)
+})
+
+watch(() => props.nodes, () => {
+  nextTick(() => fitView())
 })
 
 function onWheel(e) {
@@ -241,6 +312,36 @@ function onWheel(e) {
     h: vb.value.h * scale
   }
 }
+
+// ─── 导出 ───
+function exportSvgString() {
+  if (!svgEl.value) return ''
+  return new XMLSerializer().serializeToString(svgEl.value)
+}
+
+async function exportPngDataUrl(scale = 2) {
+  const svgStr = exportSvgString()
+  const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = img.width * scale
+      canvas.height = img.height * scale
+      const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      URL.revokeObjectURL(url)
+      resolve(canvas.toDataURL('image/png'))
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('PNG export failed')) }
+    img.src = url
+  })
+}
+
+defineExpose({ svgEl, exportSvgString, exportPngDataUrl })
 
 // ─── 拖拽节点 ───
 let dragging = null
@@ -283,6 +384,7 @@ function onEnd() {
 
 <style scoped>
 .uc-wrap {
+  position: relative;
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -291,4 +393,20 @@ function onEnd() {
   border-top: 1px solid #f1f5f9;
 }
 .uc-wrap:active { cursor: grabbing; }
+.uc-wrap.fullscreen {
+  position: fixed; inset: 0; z-index: 9999;
+  width: 100vw; height: 100vh;
+}
+.zoom-controls {
+  position: absolute; top: 10px; right: 10px; z-index: 10;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.zoom-btn {
+  width: 32px; height: 32px;
+  border: 1px solid #d1d5db; border-radius: 6px;
+  background: #fff; font-size: 15px; cursor: pointer;
+  line-height: 30px; text-align: center; padding: 0;
+  color: #333; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.zoom-btn:hover { background: #f3f4f6; border-color: #9ca3af; }
 </style>
