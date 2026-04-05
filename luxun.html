@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   <title>韩信生平</title>
+    <style>
+        /* 基础样式与重置 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'SimSun', 'STSong', serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f9f9f9;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        /* 导航栏 */
+        nav {
+            background-color: #2c3e50;
+            padding: 1rem;
+            border-radius: 5px;
+            margin-bottom: 2rem;
+        }
+        
+        nav ul {
+            display: flex;
+            list-style: none;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        nav li {
+            margin: 0 15px;
+        }
+        
+        nav a {
+            color: white;
+            text-decoration: none;
+            font-weight: bold;
+            padding: 5px 10px;
+            border-radius: 3px;
+            transition: background-color 0.3s;
+        }
+        
+        nav a:hover {
+            background-color: #34495e;
+        }
+        
+        /* 页头 */
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #ddd;
+        }
+        
+        h1 {
+            color: #2c3e50;
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .subtitle {
+            color: #7f8c8d;
+            font-style: italic;
+        }
+        
+        /* 主要内容区域 */
+        main {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+        }
+        
+        @media (min-width: 768px) {
+            main {
+                grid-template-columns: 2fr 1fr;
+            }
+        }
+        
+        section {
+            background-color: white;
+            padding: 1.5rem;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        h2 {
+            color: #2c3e50;
+            border-left: 4px solid #e74c3c;
+            padding-left: 10px;
+            margin-bottom: 1rem;
+        }
+        
+        h3 {
+            color: #34495e;
+            margin: 1rem 0 0.5rem 0;
+        }
+        
+        p {
+            margin-bottom: 1rem;
+            text-align: justify;
+        }
+        
+        ul {
+            margin-left: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        li {
+            margin-bottom: 0.5rem;
+        }
+        
+        /* 图片占位符 */
+        .image-placeholder {
+            width: 100%;
+            height: 300px;
+            background-color: #ecf0f1;
+            border: 2px dashed #bdc3c7;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #7f8c8d;
+            margin: 1rem 0;
+            border-radius: 5px;
+        }
+        
+        .portrait {
+            height: 400px;
+        }
+        
+        /* 侧边栏 */
+        aside {
+            background-color: white;
+            padding: 1.5rem;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .info-box {
+            background-color: #f8f9fa;
+            padding: 1rem;
+            border-left: 4px solid #3498db;
+            margin-bottom: 1.5rem;
+        }
+        
+        .info-item {
+            margin-bottom: 0.5rem;
+        }
+        
+        .info-label {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        
+        /* 引用样式 */
+        blockquote {
+            border-left: 4px solid #e74c3c;
+            padding-left: 1rem;
+            margin: 1.5rem 0;
+            color: #555;
+            font-style: italic;
+        }
+        
+        /* 页脚 */
+        footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding-top: 1rem;
+            border-top: 1px solid #ddd;
+            color: #7f8c8d;
+            font-size: 0.9rem;
+        }
+        
+        /* 响应式调整 */
+        @media (max-width: 767px) {
+            h1 {
+                font-size: 2rem;
+            }
+            
+            nav ul {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            nav li {
+                margin: 5px 0;
+            }
+            
+            .portrait {
+                height: 250px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav>
+        <ul>
+            <li><a href="index.html">返回首页</a></li>
+            <li><a href="simple.html">简单示例</a></li>
+            <li><a href="11/helloworld.html">Hello World</a></li>
+            <li><a href="#">鲁迅生平</a></li>
+        </ul>
+    </nav>
+    
+    <!-- 页头 -->
+    <header>
+        <h1>鲁迅生平介绍</h1>
+        <p class="subtitle">中国现代文学的奠基人，思想家，革命家</p>
+    </header>
+    
+    <main>
+        <!-- 左侧主要内容 -->
+        <div class="main-content">
+            <!-- 基本信息 -->
+            <section id="basic-info">
+                <h2>基本信息</h2>
+                <div class="image-placeholder portrait">
+                    鲁迅肖像图片占位符<br>
+                    （可替换为真实图片）
+                </div>
+                <p>鲁迅（1881年9月25日－1936年10月19日），原名周树人，字豫才，浙江绍兴人。中国现代文学的奠基人之一，新文化运动的重要参与者，中国现代思想解放的先驱。</p>
+                
+                <p>鲁迅以其犀利的文笔、深刻的思想和对社会问题的敏锐洞察而闻名。他的作品对中国现代文学产生了深远影响，被誉为“民族魂”。</p>
+            </section>
+            
+            <!-- 文学成就 -->
+            <section id="literary-achievements">
+                <h2>文学成就</h2>
+                <h3>主要作品</h3>
+                <ul>
+                    <li><strong>《呐喊》</strong>（1923年） - 第一部短篇小说集，包含《狂人日记》《阿Q正传》等名篇</li>
+                    <li><strong>《彷徨》</strong>（1926年） - 第二部短篇小说集，包含《祝福》《伤逝》等作品</li>
+                    <li><strong>《故事新编》</strong>（1936年） - 历史小说集</li>
+                    <li><strong>《朝花夕拾》</strong>（1928年） - 散文集</li>
+                    <li><strong>《野草》</strong>（1927年） - 散文诗集</li>
+                </ul>
+                
+                <h3>文学特点</h3>
+                <p>鲁迅的文学作品具有强烈的批判精神和社会关怀。他的小说多以农村和知识分子生活为背景，揭露封建礼教的吃人本质和国民劣根性。其文风犀利、冷峻，语言简练有力，开创了中国现代白话文学的新局面。</p>
+                
+                <div class="image-placeholder">
+                    文学作品封面图片占位符
+                </div>
+            </section>
+            
+            <!-- 思想贡献 -->
+            <section id="thought-contributions">
+                <h2>思想贡献</h2>
+                <h3>启蒙思想</h3>
+                <p>鲁迅是中国现代启蒙思想的重要代表。他深刻批判封建礼教和传统观念，提倡科学、民主和个性解放。他的“立人”思想强调人的独立性和主体性，对中国现代思想解放产生了深远影响。</p>
+                
+                <blockquote>
+                    “地上本没有路，走的人多了，也便成了路。”<br>
+                    —— 鲁迅《故乡》
+                </blockquote>
+                
+                <h3>社会批判</h3>
+                <p>鲁迅以笔为武器，对旧中国的社会弊端进行了无情揭露和深刻批判。他的作品直指国民劣根性，呼唤民族觉醒和社会变革。</p>
+                
+                <h3>文化反思</h3>
+                <p>鲁迅对中国传统文化进行了深刻反思，既批判其糟粕，又肯定其精华。他主张“拿来主义”，提倡有选择地吸收外来文化，创造新的民族文化。</p>
+            </section>
+        </div>
+        
+        <!-- 右侧侧边栏 -->
+        <aside>
+            <div class="info-box">
+                <h3>人物档案</h3>
+                <div class="info-item">
+                    <span class="info-label">原名：</span>周树人
+                </div>
+                <div class="info-item">
+                    <span class="info-label">字号：</span>豫才
+                </div>
+                <div class="info-item">
+                    <span class="info-label">出生：</span>1881年9月25日
+                </div>
+                <div class="info-item">
+                    <span class="info-label">逝世：</span>1936年10月19日
+                </div>
+                <div class="info-item">
+                    <span class="info-label">籍贯：</span>浙江绍兴
+                </div>
+                <div class="info-item">
+                    <span class="info-label">职业：</span>作家、思想家、革命家
+                </div>
+            </div>
+            
+            <div class="info-box">
+                <h3>历史地位</h3>
+                <p>毛泽东评价：“鲁迅的方向，就是中华民族新文化的方向。”</p>
+                <p>鲁迅被誉为“中国现代文学之父”，他的作品被翻译成多种语言，在世界范围内产生广泛影响。</p>
+            </div>
+            
+            <div class="info-box">
+                <h3>名言精选</h3>
+                <p>“横眉冷对千夫指，俯首甘为孺子牛。”</p>
+                <p>“时间就像海绵里的水，只要愿挤，总还是有的。”</p>
+                <p>“其实地上本没有路，走的人多了，也便成了路。”</p>
+            </div>
+            
+            <div class="image-placeholder">
+                相关历史图片占位符
+            </div>
+        </aside>
+    </main>
+    
+    <!-- 页脚 -->
+    <footer>
+        <p>鲁迅生平介绍页面 &copy; 2023 | 本页面为示例页面，内容仅供参考</p>
+        <p>导航：<a href="index.html">首页</a> | <a href="simple.html">简单示例</a> | <a href="11/helloworld.html">Hello World</a></p>
+    </footer>
+</body>
+</html>
