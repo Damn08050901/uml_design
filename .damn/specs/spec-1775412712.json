@@ -1,0 +1,20 @@
+{
+  "spec_id": "spec-1775412712",
+  "title": "帮我写两个html的hellowrd1和helloword2文件里面30字就行",
+  "tasks": [
+    {
+      "id": 1,
+      "title": "创建文件 — hellowrd1.html",
+      "description": "创建新文件 hellowrd1.html （约 169 字符）",
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "title": "创建文件 — helloword2.html",
+      "description": "创建新文件 helloword2.html （约 169 字符）\n切换到 **编码模式** 来执行此计划。",
+      "status": "done"
+    }
+  ],
+  "raw_plan": "1. **创建文件** — `hellowrd1.html` — 创建新文件 `hellowrd1.html` （约 169 字符）\n2. **创建文件** — `helloword2.html` — 创建新文件 `helloword2.html` （约 169 字符）\n\n\n切换到 **编码模式** 来执行此计划。",
+  "created_at": "2026-04-06 02:11:52"
+}
