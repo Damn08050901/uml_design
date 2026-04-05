@@ -1,0 +1,32 @@
+{
+  "spec_id": "spec-1775419304",
+  "title": "帮我写一个超级简单的鲁迅信息的html",
+  "tasks": [
+    {
+      "id": 1,
+      "title": "创建文件 — luxun.html",
+      "description": "创建一个包含鲁迅基本信息的简单 HTML 页面",
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "title": "编辑文件 — luxun.html",
+      "description": "添加鲁迅的生平简介和主要作品列表",
+      "status": "done"
+    },
+    {
+      "id": 3,
+      "title": "编辑文件 — luxun.html",
+      "description": "添加简单的内联样式使页面更美观",
+      "status": "done"
+    },
+    {
+      "id": 4,
+      "title": "编辑文件 — luxun.html",
+      "description": "添加鲁迅的经典名言和页面底部信息\n切换到 **编码模式** 来执行此计划。",
+      "status": "done"
+    }
+  ],
+  "raw_plan": "我将为您创建一个超级简单的鲁迅信息 HTML 页面。\n\n1. **创建文件** — `luxun.html` — 创建一个包含鲁迅基本信息的简单 HTML 页面\n2. **编辑文件** — `luxun.html` — 添加鲁迅的生平简介和主要作品列表\n3. **编辑文件** — `luxun.html` — 添加简单的内联样式使页面更美观\n4. **编辑文件** — `luxun.html` — 添加鲁迅的经典名言和页面底部信息\n\n\n切换到 **编码模式** 来执行此计划。",
+  "created_at": "2026-04-06 04:01:44"
+}
