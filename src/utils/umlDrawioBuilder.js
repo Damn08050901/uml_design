@@ -1254,27 +1254,83 @@ function buildArchitectureLayout(spec) {
   return { nodes: allNodes, edges: layoutEdges, width: laneWidth + marginX * 2, height: pageHeight }
 }
 
-async function buildFunctionStructureLayout(spec) {
+function buildFunctionStructureLayout(spec) {
   const parsed = parseFunctionStructureSpec(spec)
   if (parsed.nodes.length === 0) throw new Error('请先输入功能结构定义')
   const idOf = createIdFactory()
+  const nodeSpacing = 40, layerSpacing = 80, padding = 60
+
   const nodes = parsed.nodes.map(name => ({
-    id: idOf('func'), key: name, name, w: measureText(name, 136, 240, 11, 48), h: 54
+    id: idOf('func'), key: name, name, w: measureText(name, 120, 220, 11, 44), h: 42
   }))
-  const nodeMap = new Map(nodes.map(n => [n.key, n]))
-  const edges = parsed.edges.filter(e => nodeMap.has(e.from) && nodeMap.has(e.to))
-    .map(e => ({ id: idOf('edge'), from: nodeMap.get(e.from).id, to: nodeMap.get(e.to).id, label: e.label }))
-  const placed = await elkLayout(nodes, edges, { direction: 'DOWN', nodeSpacing: 80, layerSpacing: 140, componentSpacing: 120 })
-  return {
-    nodes: nodes.map(n => {
-      const box = placed.nodes.get(n.id) || { ...n, x: 80, y: 80 }
-      return { id: n.id, x: box.x, y: box.y, w: n.w, h: n.h, shape: 'roundedRect', label: n.name, style: { fontWeight: 'bold' } }
-    }),
-    edges: edges.map(e => ({
+  const nMap = new Map(nodes.map(n => [n.key, n]))
+  const idMap = new Map(nodes.map(n => [n.id, n]))
+  const edges = parsed.edges.filter(e => nMap.has(e.from) && nMap.has(e.to))
+    .map(e => ({ id: idOf('edge'), from: nMap.get(e.from).id, to: nMap.get(e.to).id, label: e.label }))
+
+  const childrenOf = new Map()
+  const hasParent = new Set()
+  for (const e of edges) {
+    if (!childrenOf.has(e.from)) childrenOf.set(e.from, [])
+    childrenOf.get(e.from).push(e.to)
+    hasParent.add(e.to)
+  }
+  const roots = nodes.filter(n => !hasParent.has(n.id)).map(n => n.id)
+
+  const swCache = new Map()
+  function subtreeW(id) {
+    if (swCache.has(id)) return swCache.get(id)
+    const kids = childrenOf.get(id) || []
+    const node = idMap.get(id)
+    let w
+    if (kids.length === 0) { w = node.w }
+    else { w = Math.max(node.w, kids.reduce((s, k) => s + subtreeW(k) + nodeSpacing, -nodeSpacing)) }
+    swCache.set(id, w)
+    return w
+  }
+
+  function lay(id, x, y) {
+    const node = idMap.get(id)
+    const sw = subtreeW(id)
+    node.x = x + (sw - node.w) / 2
+    node.y = y
+    const kids = childrenOf.get(id) || []
+    if (!kids.length) return
+    let cx = x
+    for (const kid of kids) {
+      const kw = subtreeW(kid)
+      lay(kid, cx, y + node.h + layerSpacing)
+      cx += kw + nodeSpacing
+    }
+  }
+
+  let sx = padding
+  for (const r of roots) { lay(r, sx, padding); sx += subtreeW(r) + nodeSpacing * 3 }
+
+  let maxX = 0, maxY = 0
+  for (const n of nodes) { maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h) }
+
+  const layoutEdges = edges.map(e => {
+    const p = idMap.get(e.from), c = idMap.get(e.to)
+    const px = p.x + p.w / 2, py = p.y + p.h
+    const cx = c.x + c.w / 2, cy = c.y
+    const my = py + (cy - py) / 2
+    return {
       id: e.id, from: e.from, to: e.to, label: e.label || '',
+      sourcePoint: { x: px, y: py },
+      points: [{ x: px, y: my }, { x: cx, y: my }],
+      targetPoint: { x: cx, y: cy },
       style: { arrowEnd: 'none', strokeWidth: 1.2 }
+    }
+  })
+
+  return {
+    nodes: nodes.map(n => ({
+      id: n.id, x: n.x, y: n.y, w: n.w, h: n.h,
+      shape: 'roundedRect', label: n.name, style: { fontWeight: 'bold' }
     })),
-    width: placed.width, height: placed.height
+    edges: layoutEdges,
+    width: maxX + padding, height: maxY + padding
   }
 }
 
