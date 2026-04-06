@@ -48,6 +48,19 @@ const canvasBusy = ref(false)
 const renderError = ref('')
 const toast = ref({ show: false, msg: '', type: 'success' })
 
+const thesisStyle = ref(true)
+const ucTheme = computed(() => thesisStyle.value ? {
+  ucFill: '#fff', ucStroke: '#111', ucText: '#111',
+  includeFill: '#fff', includeStroke: '#111', includeLine: '#111',
+  extendFill: '#fff', extendStroke: '#111', extendLine: '#111',
+  line: '#111', actorStroke: '#111', actorText: '#111'
+} : {
+  ucFill: '#dae8fc', ucStroke: '#6c8ebf', ucText: '#333',
+  includeFill: '#fff2cc', includeStroke: '#d6b656', includeLine: '#888',
+  extendFill: '#e1d5e7', extendStroke: '#9673a6', extendLine: '#9673a6',
+  line: '#555', actorStroke: '#333', actorText: '#333'
+})
+
 const chapterNo = ref(3)
 const figureNo = ref(1)
 const captionTitle = ref('系统用例图')
@@ -390,6 +403,7 @@ onMounted(() => {
           <span>用例图编辑器</span>
         </div>
         <div class="uc-left-actions">
+          <button class="btn-sm" :class="thesisStyle ? 'btn-thesis-active' : ''" @click="thesisStyle = !thesisStyle">{{ thesisStyle ? '论文风格' : '彩色风格' }}</button>
           <button class="btn-sm btn-parse" @click="showParsePanel = !showParsePanel; showAiPanel = false">粘贴生成</button>
           <button class="btn-sm btn-ai" @click="showAiPanel = !showAiPanel; showParsePanel = false">AI生成</button>
           <button class="btn-sm btn-primary" @click="applyToCanvas">应用到画布</button>
@@ -586,6 +600,7 @@ onMounted(() => {
           :edges="layoutData.edges"
           :canvasWidth="layoutData.width"
           :canvasHeight="layoutData.height"
+          :theme="ucTheme"
           @ready="handleCanvasReady"
         />
         <div v-else class="placeholder">请先在左侧生成用例结构并应用到画布</div>
@@ -750,6 +765,7 @@ onMounted(() => {
 }
 .btn-add-uc { color: #2563eb; border-color: #bfdbfe; }
 .btn-add-sub { color: #7c3aed; border-color: #ddd6fe; }
+.btn-thesis-active { color: #111; border-color: #111; background: #f8fafc; font-weight: 700; }
 .btn-parse { color: #0284c7; border-color: #bae6fd; }
 .btn-ai { color: #7c3aed; border-color: #ddd6fe; }
 .btn-icon {
