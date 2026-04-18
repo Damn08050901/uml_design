@@ -4,6 +4,13 @@ const elk = new ELK()
 
 const BASE_VERTEX_STYLE = 'whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#111111;fontColor=#111111;'
 const BASE_EDGE_STYLE = 'edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#111111;fontColor=#444444;'
+const ACTIVITY_THEME = Object.freeze({
+  accent: '#273142',
+  accentSoft: '#EEF3FF',
+  surface: '#FFFFFF',
+  surfaceSoft: '#F7FAFF',
+  label: '#64748B'
+})
 
 function escXml(value) {
   return String(value ?? '')
@@ -25,7 +32,234 @@ function splitList(value) {
 }
 
 function lineCount(text) {
-  return String(text || '').split('<br/>').length
+  return String(text || '').split(/<br\/>|\n/).length
+}
+
+function normalizeFlowText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function isFlowStartLabel(text) {
+  return /^(开始|开始流程|启动|启动流程|发起|发起流程|start|begin)$/i.test(text)
+}
+
+function isFlowEndLabel(text) {
+  return /^(结束|结束流程|流程结束|终止|停止|end|finish|done)$/i.test(text)
+}
+
+function looksLikeDecisionLabel(text) {
+  return /[?？]$/.test(text) || /^(是否|有无|能否|可否|是不是)/.test(text)
+}
+
+function activityNodePalette(type, label = '') {
+  const accentTerminator = type === 'start' || type === 'end' || (type === 'terminator' && (isFlowStartLabel(label) || isFlowEndLabel(label)))
+  if (type === 'start' || type === 'end' || accentTerminator) {
+    return { fill: '#FFFFFF', stroke: '#111111', fontColor: '#111111', strokeWidth: 1.4, fontSize: 14.5, fontWeight: '600' }
+  }
+  if (type === 'decision') {
+    return { fill: '#FFFFFF', stroke: '#111111', fontColor: '#111111', strokeWidth: 1.4, fontSize: 14, fontWeight: '600' }
+  }
+  if (type === 'subprocess') {
+    return { fill: '#FFFFFF', stroke: '#111111', fontColor: '#111111', strokeWidth: 1.3, fontSize: 14.5, fontWeight: '600', radius: 0 }
+  }
+  if (type === 'database' || type === 'io') {
+    return { fill: '#FFFFFF', stroke: '#111111', fontColor: '#111111', strokeWidth: 1.3, fontSize: 14.5, fontWeight: '500' }
+  }
+  if (type === 'connector') {
+    return { fill: '#FFFFFF', stroke: '#111111', fontColor: '#111111', strokeWidth: 1.3, fontSize: 14, fontWeight: '600' }
+  }
+  if (type === 'forkjoin') {
+    return { fill: '#FFFFFF', stroke: '#111111', fontColor: '#111111', strokeWidth: 1.4, fontSize: 0, fontWeight: '600' }
+  }
+  return { fill: '#FFFFFF', stroke: '#111111', fontColor: '#111111', strokeWidth: 1.3, fontSize: 14.5, fontWeight: '500', radius: 0 }
+}
+
+function activityNodeStyle(type, label = '') {
+  return { ...activityNodePalette(type, label) }
+}
+
+function activityEdgeStyle() {
+  return {
+    arrowEnd: 'block',
+    strokeWidth: 1.3,
+    stroke: '#111111',
+    fontColor: '#111111'
+  }
+}
+
+function activityDrawioNodeStyle(type, label = '') {
+  const palette = activityNodePalette(type, label)
+  const base = [
+    `fillColor=${palette.fill}`,
+    `strokeColor=${palette.stroke}`,
+    `fontColor=${palette.fontColor}`,
+    `strokeWidth=${palette.strokeWidth}`,
+    `fontSize=${palette.fontSize}`
+  ]
+  if (type === 'start' || type === 'end' || type === 'terminator') {
+    base.push('rounded=1', 'arcSize=28', 'align=center', 'verticalAlign=middle')
+    return base.join(';') + ';'
+  }
+  if (type === 'decision') {
+    base.push('shape=rhombus', 'perimeter=rhombusPerimeter', 'align=center', 'verticalAlign=middle')
+    return base.join(';') + ';'
+  }
+  if (type === 'io') {
+    base.push('shape=parallelogram', 'perimeter=parallelogramPerimeter', 'align=center', 'verticalAlign=middle')
+    return base.join(';') + ';'
+  }
+  if (type === 'database') {
+    base.push('shape=cylinder', 'boundedLbl=1', 'backgroundOutline=1', 'align=center', 'verticalAlign=middle')
+    return base.join(';') + ';'
+  }
+  if (type === 'connector') {
+    base.push('shape=ellipse', 'aspect=fixed', 'align=center', 'verticalAlign=middle')
+    return base.join(';') + ';'
+  }
+  if (type === 'subprocess') {
+    base.push('shape=process', 'align=center', 'verticalAlign=middle', 'rounded=1', 'arcSize=18')
+    return base.join(';') + ';'
+  }
+  if (type === 'forkjoin') {
+    base.push('rounded=0', 'align=center', 'verticalAlign=middle')
+    return base.join(';') + ';'
+  }
+  base.push('rounded=1', 'arcSize=18', 'align=center', 'verticalAlign=middle')
+  return base.join(';') + ';'
+}
+
+function activityDrawioEdgeStyle() {
+  return `${BASE_EDGE_STYLE}rounded=0;endArrow=block;endFill=1;strokeWidth=1.3;strokeColor=#111111;fontColor=#111111;`
+}
+
+function activityNodeSize(item) {
+  if (item.type === 'start' || item.type === 'end' || item.type === 'terminator') {
+    return {
+      w: measureText(item.label, 100, 190, 11, 56),
+      h: 46
+    }
+  }
+  if (item.type === 'forkjoin') return { w: 240, h: 10 }
+  if (item.type === 'connector') return { w: 42, h: 42 }
+  if (item.type === 'decision') {
+    return {
+      w: measureText(item.label, 160, 260, 12, 64),
+      h: Math.max(104, 60 + lineCount(item.label) * 22)
+    }
+  }
+  return {
+    w: measureText(item.label, 162, 290, 12, 64),
+    h: Math.max(54, 38 + lineCount(item.label) * 20)
+  }
+}
+
+function portSideToElk(side) {
+  if (side === 'T') return 'NORTH'
+  if (side === 'R') return 'EAST'
+  if (side === 'B') return 'SOUTH'
+  return 'WEST'
+}
+
+function activityPortSides(type) {
+  if (type === 'forkjoin') return ['T', 'B']
+  return ['T', 'R', 'B', 'L']
+}
+
+function createActivityPorts(nodeId, type) {
+  const portIds = {}
+  const ports = activityPortSides(type).map(side => {
+    const id = `${nodeId}_${side}`
+    portIds[side] = id
+    return {
+      id,
+      width: 6,
+      height: 6,
+      layoutOptions: {
+        'elk.port.side': portSideToElk(side)
+      }
+    }
+  })
+  return { ports, portIds }
+}
+
+function normalizeDecisionLabel(value) {
+  return String(value || '').replace(/\s+/g, '').toLowerCase()
+}
+
+function decisionBranchSide(label, branchIndex) {
+  const text = normalizeDecisionLabel(label)
+  if (/^(是|yes|y|true|通过|成功|已通过|可用|正常)$/.test(text)) return 'R'
+  if (/^(否|no|n|false|失败|驳回|错误|异常|未通过)$/.test(text)) return 'L'
+  if (branchIndex === 0) return 'R'
+  if (branchIndex === 1) return 'L'
+  return 'B'
+}
+
+function defaultActivityPortPair(sourceNode, targetNode, edgeLabel, branchIndex = 0) {
+  let sourcePort = 'B'
+  let targetPort = 'T'
+
+  if (sourceNode.type === 'decision') {
+    sourcePort = decisionBranchSide(edgeLabel, branchIndex)
+    targetPort = sourcePort === 'B' ? 'T' : 'T'
+  } else if (sourceNode.type === 'forkjoin') {
+    sourcePort = 'B'
+    targetPort = targetNode.type === 'forkjoin' ? 'T' : 'T'
+  } else if (targetNode.type === 'decision') {
+    sourcePort = 'B'
+    targetPort = 'T'
+  }
+
+  if (!sourceNode.portIds?.[sourcePort]) sourcePort = activityPortSides(sourceNode.type)[0]
+  if (!targetNode.portIds?.[targetPort]) targetPort = activityPortSides(targetNode.type)[0]
+
+  return { sourcePort, targetPort }
+}
+
+function activityLayoutOptions(parsed) {
+  const branchingCount = parsed.nodes.filter(item => item.type === 'decision' || item.type === 'forkjoin').length
+  const denseGraph = parsed.nodes.length >= 10 || branchingCount >= 2
+  return {
+    direction: 'DOWN',
+    nodeSpacing: denseGraph ? 84 : 72,
+    layerSpacing: denseGraph ? 96 : 86,
+    componentSpacing: denseGraph ? 90 : 80,
+    cycleBreaking: 'DEPTH_FIRST',
+    extraLayoutOptions: {
+      'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+      'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
+      'elk.layered.nodePlacement.favorStraightEdges': 'true',
+      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      'elk.layered.crossingMinimization.greedySwitch.type': 'TWO_SIDED',
+      'elk.layered.compaction.postCompaction.strategy': 'EDGE_LENGTH',
+      'elk.layered.thoroughness': denseGraph ? '60' : '52',
+      'elk.layered.spacing.edgeNodeBetweenLayers': denseGraph ? '38' : '34',
+      'elk.layered.spacing.edgeEdgeBetweenLayers': denseGraph ? '24' : '18',
+      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+      'elk.layered.mergeEdges': 'false'
+    }
+  }
+}
+
+function applyActivityEdgeRoutes(edges, placed) {
+  const nodeBoxes = new Map()
+  for (const [id, node] of placed.nodes || new Map()) {
+    nodeBoxes.set(id, { x: node.x, y: node.y, w: node.w, h: node.h })
+  }
+  return edges.map(edge => {
+    const route = placed.edgeRoutes?.get(edge.id)
+    return {
+      ...edge,
+      from: edge.fromNodeId,
+      to: edge.toNodeId,
+      style: activityEdgeStyle(),
+      sourcePoint: route?.sourcePoint ? { x: route.sourcePoint.x, y: route.sourcePoint.y } : undefined,
+      targetPoint: route?.targetPoint ? { x: route.targetPoint.x, y: route.targetPoint.y } : undefined,
+      points: route?.bendPoints?.map(point => ({ x: point.x, y: point.y })) || undefined,
+      layoutSourceBox: nodeBoxes.get(edge.fromNodeId),
+      layoutTargetBox: nodeBoxes.get(edge.toNodeId)
+    }
+  })
 }
 
 function wrapDrawioFile(diagramName, cells, pageWidth = 1600, pageHeight = 1000) {
@@ -82,6 +316,15 @@ function htmlLines(lines, options = {}) {
   const align = options.align || 'left'
   const weight = options.weight || 'normal'
   return `<div style="text-align:${align};font-weight:${weight};line-height:1.6;">${lines.map(line => escHtml(line)).join('<br/>')}</div>`
+}
+
+function verticalTextLines(label) {
+  return [...String(label || '').replace(/\s+/g, '').trim()]
+}
+
+function verticalLabelHtml(label, weight = 'normal') {
+  const lines = verticalTextLines(label)
+  return htmlLines(lines.length ? lines : [''], { align: 'center', weight })
 }
 
 function classCardHtml(item) {
@@ -165,13 +408,26 @@ async function elkLayout(nodes, edges, options = {}) {
         'elk.spacing.nodeNode': String(options.nodeSpacing || 80),
         'elk.layered.spacing.nodeNodeBetweenLayers': String(options.layerSpacing || 110),
         'elk.spacing.componentComponent': String(options.componentSpacing || 90),
-        'elk.separateConnectedComponents': 'true'
+        'elk.separateConnectedComponents': 'true',
+        'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+        'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
+        'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+        'elk.layered.crossingMinimization.greedySwitch.type': 'TWO_SIDED',
+        'elk.layered.compaction.postCompaction.strategy': 'EDGE_LENGTH',
+        'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+        'elk.layered.thoroughness': '40',
+        'elk.layered.spacing.edgeNodeBetweenLayers': '30',
+        'elk.layered.spacing.edgeEdgeBetweenLayers': '20',
+        'elk.layered.mergeEdges': 'true',
+        ...(options.cycleBreaking ? { 'elk.layered.cycleBreaking.strategy': options.cycleBreaking } : {}),
+        ...(options.extraLayoutOptions || {})
       },
-      children: nodes.map(node => ({
-        id: node.id,
-        width: node.w,
-        height: node.h
-      })),
+      children: nodes.map(node => {
+        const child = { id: node.id, width: node.w, height: node.h }
+        if (node.layoutOptions) child.layoutOptions = node.layoutOptions
+        if (node.ports) child.ports = node.ports
+        return child
+      }),
       edges: edges.map(edge => ({
         id: edge.id,
         sources: [edge.from],
@@ -185,8 +441,19 @@ async function elkLayout(nodes, edges, options = {}) {
       if (!source) continue
       placed.set(child.id, { ...source, x: child.x || 0, y: child.y || 0 })
     }
+    const edgeRoutes = new Map()
+    for (const le of layout.edges || []) {
+      const sec = le.sections?.[0]
+      if (!sec) continue
+      edgeRoutes.set(le.id, {
+        sourcePoint: sec.startPoint,
+        targetPoint: sec.endPoint,
+        bendPoints: sec.bendPoints || []
+      })
+    }
     return {
       nodes: placed,
+      edgeRoutes,
       width: (layout.width || 1200) + 120,
       height: (layout.height || 800) + 120
     }
@@ -251,7 +518,7 @@ function parseClassSpec(spec) {
 }
 
 function createFlowNode(raw) {
-  const text = raw.trim()
+  const text = normalizeFlowText(raw)
   if (!text) return null
   if (/^===(.+)===$/.test(text)) return { key: text, label: text.replace(/^===|===$/g, '').trim(), type: 'forkjoin' }
   if (/^\(\((.+)\)\)$/.test(text)) return { key: text, label: text.slice(2, -2).trim(), type: 'connector' }
@@ -260,8 +527,9 @@ function createFlowNode(raw) {
   if (/^\{(.+)\}$/.test(text)) return { key: text, label: text.slice(1, -1).trim(), type: 'decision' }
   if (/^\/(.+)\/$/.test(text)) return { key: text, label: text.slice(1, -1).trim(), type: 'io' }
   if (/^\((.+)\)$/.test(text)) return { key: text, label: text.slice(1, -1).trim(), type: 'terminator' }
-  if (/^开始$|^Start$/i.test(text)) return { key: text, label: '', type: 'start' }
-  if (/^结束$|^End$/i.test(text)) return { key: text, label: '', type: 'end' }
+  if (isFlowStartLabel(text)) return { key: text, label: text, type: 'start' }
+  if (isFlowEndLabel(text)) return { key: text, label: text, type: 'end' }
+  if (looksLikeDecisionLabel(text)) return { key: text, label: text, type: 'decision' }
   if (/^\[(.+)\]$/.test(text)) return { key: text, label: text.slice(1, -1).trim(), type: 'process' }
   return { key: text, label: text, type: 'process' }
 }
@@ -397,6 +665,285 @@ function parseFunctionStructureSpec(spec) {
     nodes.add(line)
   }
   return { nodes: [...nodes], edges }
+}
+
+function uniqueItems(items) {
+  return [...new Set(items)]
+}
+
+function collectLeafFunctionNodes(key, childrenOf) {
+  const kids = childrenOf.get(key) || []
+  if (!kids.length) return [key]
+  return kids.flatMap(child => collectLeafFunctionNodes(child, childrenOf))
+}
+
+function buildFunctionStructureTreeLayout(spec) {
+  const parsed = parseFunctionStructureSpec(spec)
+  if (parsed.nodes.length === 0) throw new Error('请先输入功能结构定义')
+  const idOf = createIdFactory()
+  const nodeSpacing = 40
+  const layerSpacing = 80
+  const padding = 60
+
+  const nodes = parsed.nodes.map(name => ({
+    id: idOf('func'),
+    key: name,
+    name,
+    w: measureText(name, 120, 220, 11, 44),
+    h: 42
+  }))
+  const nMap = new Map(nodes.map(n => [n.key, n]))
+  const idMap = new Map(nodes.map(n => [n.id, n]))
+  const edges = parsed.edges
+    .filter(e => nMap.has(e.from) && nMap.has(e.to))
+    .map(e => ({ id: idOf('edge'), from: nMap.get(e.from).id, to: nMap.get(e.to).id, label: e.label }))
+
+  const childrenOf = new Map()
+  const hasParent = new Set()
+  for (const e of edges) {
+    if (!childrenOf.has(e.from)) childrenOf.set(e.from, [])
+    childrenOf.get(e.from).push(e.to)
+    hasParent.add(e.to)
+  }
+  const roots = nodes.filter(n => !hasParent.has(n.id)).map(n => n.id)
+
+  const swCache = new Map()
+  function subtreeW(id) {
+    if (swCache.has(id)) return swCache.get(id)
+    const kids = childrenOf.get(id) || []
+    const node = idMap.get(id)
+    let w
+    if (kids.length === 0) w = node.w
+    else w = Math.max(node.w, kids.reduce((sum, kid) => sum + subtreeW(kid) + nodeSpacing, -nodeSpacing))
+    swCache.set(id, w)
+    return w
+  }
+
+  function lay(id, x, y) {
+    const node = idMap.get(id)
+    const sw = subtreeW(id)
+    node.x = x + (sw - node.w) / 2
+    node.y = y
+    const kids = childrenOf.get(id) || []
+    if (!kids.length) return
+    let cx = x
+    for (const kid of kids) {
+      const kw = subtreeW(kid)
+      lay(kid, cx, y + node.h + layerSpacing)
+      cx += kw + nodeSpacing
+    }
+  }
+
+  let sx = padding
+  for (const r of roots) {
+    lay(r, sx, padding)
+    sx += subtreeW(r) + nodeSpacing * 3
+  }
+
+  let maxX = 0
+  let maxY = 0
+  for (const n of nodes) {
+    maxX = Math.max(maxX, n.x + n.w)
+    maxY = Math.max(maxY, n.y + n.h)
+  }
+
+  const layoutEdges = edges.map(e => {
+    const p = idMap.get(e.from)
+    const c = idMap.get(e.to)
+    const px = p.x + p.w / 2
+    const py = p.y + p.h
+    const cx = c.x + c.w / 2
+    const cy = c.y
+    const my = py + (cy - py) / 2
+    return {
+      id: e.id,
+      from: e.from,
+      to: e.to,
+      label: e.label || '',
+      sourcePoint: { x: px, y: py },
+      points: [{ x: px, y: my }, { x: cx, y: my }],
+      targetPoint: { x: cx, y: cy },
+      style: { arrowEnd: 'none', strokeWidth: 1.2, stroke: '#111111' }
+    }
+  })
+
+  return {
+    nodes: nodes.map(n => ({
+      id: n.id,
+      x: n.x,
+      y: n.y,
+      w: n.w,
+      h: n.h,
+      shape: 'rect',
+      label: n.name,
+      style: { fill: '#FFFFFF', stroke: '#111111', fontColor: '#111111', strokeWidth: 1.2, fontWeight: 'bold', radius: 0 }
+    })),
+    edges: layoutEdges,
+    width: maxX + padding,
+    height: maxY + padding
+  }
+}
+
+function buildFunctionStructureAcademicLayout(spec) {
+  const parsed = parseFunctionStructureSpec(spec)
+  if (parsed.nodes.length === 0) throw new Error('请先输入功能结构定义')
+
+  const childrenOf = new Map()
+  const hasParent = new Set()
+  for (const edge of parsed.edges) {
+    if (!childrenOf.has(edge.from)) childrenOf.set(edge.from, [])
+    childrenOf.get(edge.from).push(edge.to)
+    hasParent.add(edge.to)
+  }
+
+  const roots = parsed.nodes.filter(name => !hasParent.has(name))
+  const rootKey = roots[0]
+  const groupKeys = rootKey ? (childrenOf.get(rootKey) || []) : []
+  if (!rootKey || groupKeys.length === 0) return null
+
+  const idOf = createIdFactory()
+  const paddingX = 56
+  const paddingY = 34
+  const rootGapY = 74
+  const groupGapY = 68
+  const groupSpacing = 72
+  const childGap = 16
+  const childWidth = 40
+  const groupHeight = 36
+  const rootHeight = 38
+  const childBusGap = 18
+  const rootBusGap = 18
+
+  const nodes = []
+  const edges = []
+  const topGroupModels = groupKeys.map(groupKey => {
+    const leaves = uniqueItems((childrenOf.get(groupKey) || []).flatMap(child => collectLeafFunctionNodes(child, childrenOf)))
+    const childItems = leaves.map(label => {
+      const lines = verticalTextLines(label)
+      return {
+        id: idOf('func'),
+        label,
+        w: childWidth,
+        h: Math.max(96, 22 + lines.length * 18),
+        style: {
+          fill: '#FFFFFF',
+          stroke: '#111111',
+          fontColor: '#111111',
+          strokeWidth: 1.2,
+          fontSize: 12,
+          verticalText: true,
+          verticalTextGap: 17,
+          radius: 0
+        }
+      }
+    })
+    const childRegionWidth = childItems.length > 0
+      ? childItems.reduce((sum, item) => sum + item.w, 0) + Math.max(0, childItems.length - 1) * childGap
+      : 0
+    return {
+      id: idOf('group'),
+      key: groupKey,
+      label: groupKey,
+      w: measureText(groupKey, 110, 180, 10, 38),
+      h: groupHeight,
+      children: childItems,
+      regionWidth: Math.max(measureText(groupKey, 120, 200, 10, 42), childRegionWidth),
+      childRegionWidth
+    }
+  })
+
+  const totalGroupsWidth = topGroupModels.reduce((sum, group) => sum + group.regionWidth, 0) + Math.max(0, topGroupModels.length - 1) * groupSpacing
+  const rootWidth = Math.max(measureText(rootKey, 260, 560, 11, 72), totalGroupsWidth * 0.55)
+  const contentWidth = Math.max(rootWidth, totalGroupsWidth)
+  const rootX = paddingX + (contentWidth - rootWidth) / 2
+  const rootY = paddingY
+  const rootNode = {
+    id: idOf('root'),
+    x: rootX,
+    y: rootY,
+    w: rootWidth,
+    h: rootHeight,
+    shape: 'rect',
+    label: rootKey,
+    style: { fill: '#FFFFFF', stroke: '#111111', fontColor: '#111111', strokeWidth: 1.2, fontWeight: 'bold', fontSize: 13, radius: 0 }
+  }
+  nodes.push(rootNode)
+
+  let cursorX = paddingX + (contentWidth - totalGroupsWidth) / 2
+  let maxBottom = rootY + rootHeight
+  for (const group of topGroupModels) {
+    const groupRegionX = cursorX
+    const groupX = groupRegionX + (group.regionWidth - group.w) / 2
+    const groupY = rootY + rootHeight + rootGapY
+    const groupNode = {
+      id: group.id,
+      x: groupX,
+      y: groupY,
+      w: group.w,
+      h: group.h,
+      shape: 'rect',
+      label: group.label,
+      style: { fill: '#FFFFFF', stroke: '#111111', fontColor: '#111111', strokeWidth: 1.2, fontWeight: 'bold', fontSize: 13, radius: 0 }
+    }
+    nodes.push(groupNode)
+
+    const groupTopCenterX = groupNode.x + groupNode.w / 2
+    const rootBottomCenterX = rootNode.x + rootNode.w / 2
+    const rootBusY = groupNode.y - rootBusGap
+    edges.push({
+      id: idOf('edge'),
+      from: rootNode.id,
+      to: groupNode.id,
+      label: '',
+      sourcePoint: { x: rootBottomCenterX, y: rootNode.y + rootNode.h },
+      points: [{ x: rootBottomCenterX, y: rootBusY }, { x: groupTopCenterX, y: rootBusY }],
+      targetPoint: { x: groupTopCenterX, y: groupNode.y },
+      style: { arrowEnd: 'none', strokeWidth: 1.2, stroke: '#111111' }
+    })
+
+    if (group.children.length > 0) {
+      const childStartX = groupRegionX + (group.regionWidth - group.childRegionWidth) / 2
+      const tallestChild = Math.max(...group.children.map(item => item.h))
+      const childY = groupNode.y + groupNode.h + groupGapY
+      const childBusY = childY - childBusGap
+      group.children.forEach((child, index) => {
+        const childX = childStartX + index * (child.w + childGap)
+        nodes.push({
+          id: child.id,
+          x: childX,
+          y: childY,
+          w: child.w,
+          h: child.h,
+          shape: 'verticalRect',
+          label: child.label,
+          style: child.style
+        })
+        const childTopCenterX = childX + child.w / 2
+        edges.push({
+          id: idOf('edge'),
+          from: groupNode.id,
+          to: child.id,
+          label: '',
+          sourcePoint: { x: groupTopCenterX, y: groupNode.y + groupNode.h },
+          points: [{ x: groupTopCenterX, y: childBusY }, { x: childTopCenterX, y: childBusY }],
+          targetPoint: { x: childTopCenterX, y: childY },
+          style: { arrowEnd: 'none', strokeWidth: 1.2, stroke: '#111111' }
+        })
+      })
+      maxBottom = Math.max(maxBottom, childY + tallestChild)
+    } else {
+      maxBottom = Math.max(maxBottom, groupY + group.h)
+    }
+
+    cursorX += group.regionWidth + groupSpacing
+  }
+
+  return {
+    nodes,
+    edges,
+    width: paddingX * 2 + contentWidth,
+    height: maxBottom + paddingY
+  }
 }
 
 function parseSequenceSpec(spec) {
@@ -543,49 +1090,72 @@ function classEdgeStyle(op) {
   return 'endArrow=none;'
 }
 
+function buildActivityNodes(parsed, idOf) {
+  return parsed.nodes.map(item => {
+    const size = activityNodeSize(item)
+    const id = idOf('flow')
+    const { ports, portIds } = createActivityPorts(id, item.type)
+    const node = {
+      id,
+      key: item.key,
+      label: item.label,
+      type: item.type,
+      w: size.w,
+      h: size.h,
+      ports,
+      portIds,
+      layoutOptions: {
+        'elk.portConstraints': 'FIXED_SIDE'
+      }
+    }
+    if (item.type === 'start') node.layoutOptions['elk.layered.layering.layerConstraint'] = 'FIRST'
+    if (item.type === 'end') node.layoutOptions['elk.layered.layering.layerConstraint'] = 'LAST'
+    return node
+  })
+}
+
+function buildActivityEdges(parsed, nodeMap, idOf) {
+  const nodeOrder = new Map()
+  parsed.nodes.forEach((item, index) => nodeOrder.set(item.key, index))
+  const outgoingCounter = new Map()
+  return parsed.edges
+    .filter(edge => nodeMap.has(edge.from) && nodeMap.has(edge.to))
+    .map(edge => {
+      const sourceNode = nodeMap.get(edge.from)
+      const targetNode = nodeMap.get(edge.to)
+      const branchIndex = outgoingCounter.get(edge.from) || 0
+      outgoingCounter.set(edge.from, branchIndex + 1)
+      const isBackEdge = (nodeOrder.get(edge.from) ?? 0) > (nodeOrder.get(edge.to) ?? 0)
+        && sourceNode.type !== 'decision' && sourceNode.type !== 'forkjoin'
+      let sourcePort, targetPort
+      if (isBackEdge) {
+        sourcePort = 'L'
+        targetPort = 'L'
+      } else {
+        ({ sourcePort, targetPort } = defaultActivityPortPair(sourceNode, targetNode, edge.label, branchIndex))
+      }
+      return {
+        id: idOf('edge'),
+        from: sourceNode.portIds[sourcePort],
+        to: targetNode.portIds[targetPort],
+        fromNodeId: sourceNode.id,
+        toNodeId: targetNode.id,
+        sourcePort,
+        targetPort,
+        label: edge.label
+      }
+    })
+}
+
 async function buildActivityDiagram(diagramName, spec) {
   const parsed = parseActivitySpec(spec)
   if (parsed.nodes.length === 0 || parsed.edges.length === 0) throw new Error('请先输入流程图定义')
   const idOf = createIdFactory()
-  const nodes = parsed.nodes.map(item => {
-    let width, height
-    if (item.type === 'start' || item.type === 'end') {
-      width = 30; height = 30
-    } else if (item.type === 'forkjoin') {
-      width = 200; height = 8
-    } else if (item.type === 'connector') {
-      width = 40; height = 40
-    } else if (item.type === 'decision') {
-      width = Math.max(110, measureText(item.label, 110, 180, 10, 30))
-      height = Math.max(84, 40 + lineCount(item.label) * 18)
-    } else {
-      width = measureText(item.label, 120, 220, 11, 50)
-      height = Math.max(54, 38 + lineCount(item.label) * 16)
-    }
-    return {
-      id: idOf('flow'),
-      key: item.key,
-      label: item.label,
-      type: item.type,
-      w: width,
-      h: height
-    }
-  })
+  const nodes = buildActivityNodes(parsed, idOf)
   const nodeMap = new Map(nodes.map(node => [node.key, node]))
-  const edges = parsed.edges
-    .filter(edge => nodeMap.has(edge.from) && nodeMap.has(edge.to))
-    .map(edge => ({
-      id: idOf('edge'),
-      from: nodeMap.get(edge.from).id,
-      to: nodeMap.get(edge.to).id,
-      label: edge.label
-    }))
-  const placed = await elkLayout(nodes, edges, {
-    direction: 'DOWN',
-    nodeSpacing: 80,
-    layerSpacing: 110,
-    componentSpacing: 110
-  })
+  const edges = buildActivityEdges(parsed, nodeMap, idOf)
+  const placed = await elkLayout(nodes, edges, activityLayoutOptions(parsed))
+  const routedEdges = applyActivityEdgeRoutes(edges, placed)
 
   const xmlCells = []
   for (const node of nodes) {
@@ -597,32 +1167,26 @@ async function buildActivityDiagram(diagramName, spec) {
       w: node.w,
       h: node.h,
       value: nodeLabelHtml(node.label),
-      style: `${BASE_VERTEX_STYLE}${flowNodeStyle(node.type)}`
+      style: `${BASE_VERTEX_STYLE}${activityDrawioNodeStyle(node.type, node.label)}`
     }))
   }
-  for (const edge of edges) {
+  for (const edge of routedEdges) {
     xmlCells.push(edgeCell({
       id: edge.id,
       source: edge.from,
       target: edge.to,
       value: edge.label || '',
-      style: `${BASE_EDGE_STYLE}endArrow=block;strokeWidth=1.3;`
+      style: activityDrawioEdgeStyle(),
+      sourcePoint: edge.sourcePoint,
+      targetPoint: edge.targetPoint,
+      points: edge.points || []
     }))
   }
   return wrapDrawioFile(diagramName, xmlCells, placed.width, placed.height)
 }
 
 function flowNodeStyle(type) {
-  if (type === 'start') return 'shape=startState;fillColor=#000000;strokeColor=#000000;fontSize=0;'
-  if (type === 'end') return 'shape=endState;fillColor=#000000;strokeColor=#000000;fontSize=0;'
-  if (type === 'terminator') return 'rounded=1;arcSize=50;align=center;verticalAlign=middle;'
-  if (type === 'decision') return 'shape=rhombus;perimeter=rhombusPerimeter;align=center;verticalAlign=middle;'
-  if (type === 'io') return 'shape=parallelogram;perimeter=parallelogramPerimeter;align=center;verticalAlign=middle;'
-  if (type === 'database') return 'shape=cylinder;boundedLbl=1;backgroundOutline=1;align=center;verticalAlign=middle;'
-  if (type === 'connector') return 'shape=ellipse;aspect=fixed;align=center;verticalAlign=middle;'
-  if (type === 'subprocess') return 'shape=process;align=center;verticalAlign=middle;'
-  if (type === 'forkjoin') return 'fillColor=#000000;strokeColor=#000000;rounded=0;align=center;verticalAlign=middle;fontSize=0;'
-  return 'rounded=1;arcSize=10;align=center;verticalAlign=middle;'
+  return activityDrawioNodeStyle(type)
 }
 
 async function buildDeploymentDiagram(diagramName, spec) {
@@ -792,54 +1356,32 @@ function buildDefaultArchitectureEdges(layers) {
 }
 
 async function buildFunctionStructureDiagram(diagramName, spec) {
-  const parsed = parseFunctionStructureSpec(spec)
-  if (parsed.nodes.length === 0) throw new Error('请先输入功能结构定义')
-  const idOf = createIdFactory()
-  const nodes = parsed.nodes.map(name => ({
-    id: idOf('func'),
-    key: name,
-    name,
-    w: measureText(name, 136, 240, 11, 48),
-    h: 54
-  }))
-  const nodeMap = new Map(nodes.map(node => [node.key, node]))
-  const edges = parsed.edges
-    .filter(edge => nodeMap.has(edge.from) && nodeMap.has(edge.to))
-    .map(edge => ({
-      id: idOf('edge'),
-      from: nodeMap.get(edge.from).id,
-      to: nodeMap.get(edge.to).id,
-      label: edge.label
-    }))
-  const placed = await elkLayout(nodes, edges, {
-    direction: 'DOWN',
-    nodeSpacing: 60,
-    layerSpacing: 120,
-    componentSpacing: 100
-  })
+  const layout = buildFunctionStructureLayout(spec)
   const xmlCells = []
-  for (const node of nodes) {
-    const box = placed.nodes.get(node.id) || { ...node, x: 80, y: 80 }
+  for (const node of layout.nodes) {
     xmlCells.push(vertexCell({
       id: node.id,
-      x: box.x,
-      y: box.y,
+      x: node.x,
+      y: node.y,
       w: node.w,
       h: node.h,
-      value: nodeLabelHtml(node.name, true),
-      style: `${BASE_VERTEX_STYLE}rounded=1;arcSize=10;align=center;verticalAlign=middle;`
+      value: node.style?.verticalText ? verticalLabelHtml(node.label, node.style?.fontWeight || 'normal') : nodeLabelHtml(node.label, node.style?.fontWeight === 'bold' || node.style?.fontWeight === '600'),
+      style: `${BASE_VERTEX_STYLE}rounded=0;align=center;verticalAlign=middle;fillColor=#FFFFFF;strokeColor=#111111;fontColor=#111111;strokeWidth=${node.style?.strokeWidth || 1.2};`
     }))
   }
-  for (const edge of edges) {
+  for (const edge of layout.edges) {
     xmlCells.push(edgeCell({
       id: edge.id,
       source: edge.from,
       target: edge.to,
       value: edge.label || '',
-      style: `${BASE_EDGE_STYLE}endArrow=none;strokeWidth=1.2;`
+      style: `${BASE_EDGE_STYLE}rounded=0;endArrow=none;strokeWidth=${edge.style?.strokeWidth || 1.2};strokeColor=${edge.style?.stroke || '#111111'};`,
+      sourcePoint: edge.sourcePoint,
+      targetPoint: edge.targetPoint,
+      points: edge.points || []
     }))
   }
-  return wrapDrawioFile(diagramName, xmlCells, placed.width, placed.height)
+  return wrapDrawioFile(diagramName, xmlCells, layout.width, layout.height)
 }
 
 async function buildSequenceDiagram(diagramName, spec) {
@@ -1129,43 +1671,48 @@ async function buildClassLayout(spec) {
 }
 
 function flowShapeMap(type) {
-  if (type === 'start') return 'startState'
-  if (type === 'end') return 'endState'
+  if (type === 'start' || type === 'end' || type === 'terminator') return 'roundedRect'
   if (type === 'decision') return 'diamond'
   if (type === 'forkjoin') return 'forkjoin'
   if (type === 'connector') return 'ellipse'
   if (type === 'database') return 'cylinder'
-  if (type === 'terminator') return 'roundedRect'
-  if (type === 'io') return 'roundedRect'
+  if (type === 'io') return 'parallelogram'
   if (type === 'subprocess') return 'rect'
-  return 'roundedRect'
+  return 'rect'
 }
 
 async function buildActivityLayout(spec) {
   const parsed = parseActivitySpec(spec)
   if (parsed.nodes.length === 0 || parsed.edges.length === 0) throw new Error('请先输入流程图定义')
   const idOf = createIdFactory()
-  const nodes = parsed.nodes.map(item => {
-    let w, h
-    if (item.type === 'start' || item.type === 'end') { w = 30; h = 30 }
-    else if (item.type === 'forkjoin') { w = 200; h = 8 }
-    else if (item.type === 'connector') { w = 40; h = 40 }
-    else if (item.type === 'decision') { w = Math.max(110, measureText(item.label, 110, 180, 10, 30)); h = Math.max(84, 40 + lineCount(item.label) * 18) }
-    else { w = measureText(item.label, 120, 220, 11, 50); h = Math.max(54, 38 + lineCount(item.label) * 16) }
-    return { id: idOf('flow'), key: item.key, label: item.label, type: item.type, w, h }
-  })
+  const nodes = buildActivityNodes(parsed, idOf)
   const nodeMap = new Map(nodes.map(n => [n.key, n]))
-  const edges = parsed.edges.filter(e => nodeMap.has(e.from) && nodeMap.has(e.to))
-    .map(e => ({ id: idOf('edge'), from: nodeMap.get(e.from).id, to: nodeMap.get(e.to).id, label: e.label }))
-  const placed = await elkLayout(nodes, edges, { direction: 'DOWN', nodeSpacing: 100, layerSpacing: 130, componentSpacing: 130 })
+  const edges = buildActivityEdges(parsed, nodeMap, idOf)
+  const placed = await elkLayout(nodes, edges, activityLayoutOptions(parsed))
+  const routedEdges = applyActivityEdgeRoutes(edges, placed)
+
   return {
     nodes: nodes.map(n => {
       const box = placed.nodes.get(n.id) || { ...n, x: 80, y: 80 }
-      return { id: n.id, x: box.x, y: box.y, w: n.w, h: n.h, shape: flowShapeMap(n.type), label: n.label }
+      return {
+        id: n.id, x: box.x, y: box.y, w: n.w, h: n.h,
+        shape: flowShapeMap(n.type), label: n.label,
+        style: activityNodeStyle(n.type, n.label)
+      }
     }),
-    edges: edges.map(e => ({
-      id: e.id, from: e.from, to: e.to, label: e.label || '',
-      style: { arrowEnd: 'block', strokeWidth: 1.3 }
+    edges: routedEdges.map(e => ({
+      id: e.id,
+      from: e.from,
+      to: e.to,
+      label: e.label || '',
+      style: e.style,
+      sourcePort: e.sourcePort,
+      targetPort: e.targetPort,
+      sourcePoint: e.sourcePoint,
+      targetPoint: e.targetPoint,
+      points: e.points,
+      layoutSourceBox: e.layoutSourceBox,
+      layoutTargetBox: e.layoutTargetBox
     })),
     width: placed.width, height: placed.height
   }
@@ -1255,83 +1802,7 @@ function buildArchitectureLayout(spec) {
 }
 
 function buildFunctionStructureLayout(spec) {
-  const parsed = parseFunctionStructureSpec(spec)
-  if (parsed.nodes.length === 0) throw new Error('请先输入功能结构定义')
-  const idOf = createIdFactory()
-  const nodeSpacing = 40, layerSpacing = 80, padding = 60
-
-  const nodes = parsed.nodes.map(name => ({
-    id: idOf('func'), key: name, name, w: measureText(name, 120, 220, 11, 44), h: 42
-  }))
-  const nMap = new Map(nodes.map(n => [n.key, n]))
-  const idMap = new Map(nodes.map(n => [n.id, n]))
-  const edges = parsed.edges.filter(e => nMap.has(e.from) && nMap.has(e.to))
-    .map(e => ({ id: idOf('edge'), from: nMap.get(e.from).id, to: nMap.get(e.to).id, label: e.label }))
-
-  const childrenOf = new Map()
-  const hasParent = new Set()
-  for (const e of edges) {
-    if (!childrenOf.has(e.from)) childrenOf.set(e.from, [])
-    childrenOf.get(e.from).push(e.to)
-    hasParent.add(e.to)
-  }
-  const roots = nodes.filter(n => !hasParent.has(n.id)).map(n => n.id)
-
-  const swCache = new Map()
-  function subtreeW(id) {
-    if (swCache.has(id)) return swCache.get(id)
-    const kids = childrenOf.get(id) || []
-    const node = idMap.get(id)
-    let w
-    if (kids.length === 0) { w = node.w }
-    else { w = Math.max(node.w, kids.reduce((s, k) => s + subtreeW(k) + nodeSpacing, -nodeSpacing)) }
-    swCache.set(id, w)
-    return w
-  }
-
-  function lay(id, x, y) {
-    const node = idMap.get(id)
-    const sw = subtreeW(id)
-    node.x = x + (sw - node.w) / 2
-    node.y = y
-    const kids = childrenOf.get(id) || []
-    if (!kids.length) return
-    let cx = x
-    for (const kid of kids) {
-      const kw = subtreeW(kid)
-      lay(kid, cx, y + node.h + layerSpacing)
-      cx += kw + nodeSpacing
-    }
-  }
-
-  let sx = padding
-  for (const r of roots) { lay(r, sx, padding); sx += subtreeW(r) + nodeSpacing * 3 }
-
-  let maxX = 0, maxY = 0
-  for (const n of nodes) { maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h) }
-
-  const layoutEdges = edges.map(e => {
-    const p = idMap.get(e.from), c = idMap.get(e.to)
-    const px = p.x + p.w / 2, py = p.y + p.h
-    const cx = c.x + c.w / 2, cy = c.y
-    const my = py + (cy - py) / 2
-    return {
-      id: e.id, from: e.from, to: e.to, label: e.label || '',
-      sourcePoint: { x: px, y: py },
-      points: [{ x: px, y: my }, { x: cx, y: my }],
-      targetPoint: { x: cx, y: cy },
-      style: { arrowEnd: 'none', strokeWidth: 1.2 }
-    }
-  })
-
-  return {
-    nodes: nodes.map(n => ({
-      id: n.id, x: n.x, y: n.y, w: n.w, h: n.h,
-      shape: 'roundedRect', label: n.name, style: { fontWeight: 'bold' }
-    })),
-    edges: layoutEdges,
-    width: maxX + padding, height: maxY + padding
-  }
+  return buildFunctionStructureAcademicLayout(spec) || buildFunctionStructureTreeLayout(spec)
 }
 
 function buildSequenceLayout(spec) {
