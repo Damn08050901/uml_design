@@ -15,6 +15,14 @@ import { saveAs } from 'file-saver'
 import { detectRelations } from './utils/aiRelation.js'
 import { toDrawioXml } from './utils/drawioExport.js'
 import { autoFillComments } from './utils/autoTranslate.js'
+import {
+  AI_PRESETS,
+  LONGCAT_MODELS,
+  applyAiPreset,
+  generateDiagramSpecWithAi,
+  loadDiagramAiSettings,
+  saveDiagramAiSettings
+} from './utils/diagramAi.js'
 
 // ─── 模式切换：ER图 / 用例图 / 各类UML图 ───
 const appMode = ref('er')
@@ -76,6 +84,11 @@ const styleConfig = ref({ entityW: 120, entityH: 40, attrRx: 50, attrRy: 20, fon
 const showThemePanel = ref(false)
 const showStylePanel = ref(false)
 const showExportMenu = ref(false)
+const showErAiPanel = ref(false)
+const showErAiConfig = ref(false)
+const erAiPrompt = ref('')
+const erAiLoading = ref(false)
+const erAiSettings = ref(loadDiagramAiSettings())
 const erChapter = ref(3)
 const erFigure = ref(1)
 const erCaptionTitle = ref('系统E-R图')
@@ -252,6 +265,37 @@ async function exportImg(type) {
   } catch (e) { showToast('导出失败: ' + e.message, 'error') }
 }
 
+// AI 生成 SQL
+function saveErAiConfig() {
+  saveDiagramAiSettings(erAiSettings.value)
+  showErAiConfig.value = false
+  showToast('AI 配置已保存到浏览器本地')
+}
+
+function changeErAiPreset(presetId) {
+  erAiSettings.value = applyAiPreset(presetId, erAiSettings.value)
+}
+
+async function erAiGenerate() {
+  if (!erAiPrompt.value.trim()) { showToast('请输入系统描述', 'warn'); return }
+  erAiLoading.value = true
+  try {
+    const result = await generateDiagramSpecWithAi({
+      diagramType: 'er_sql',
+      userPrompt: erAiPrompt.value,
+      settings: erAiSettings.value
+    })
+    sqlInput.value = result
+    saveDiagramAiSettings(erAiSettings.value)
+    showErAiPanel.value = false
+    showToast('AI 已生成 SQL，ER 图自动更新')
+  } catch (error) {
+    showToast(`AI 生成失败: ${error.message}`, 'error')
+  } finally {
+    erAiLoading.value = false
+  }
+}
+
 // 关闭面板（点击外部）
 function closeAll() {
   showThemePanel.value = false
@@ -266,22 +310,40 @@ function closeAll() {
     <!-- 顶部导航 -->
     <header class="header">
       <div class="logo">
-        <span class="logo-icon">◈</span>
+        <svg class="logo-icon-svg" width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="4" stroke="#3b82f6" stroke-width="2"/><circle cx="8" cy="12" r="2" fill="#3b82f6"/><circle cx="16" cy="8" r="2" fill="#60a5fa"/><circle cx="16" cy="16" r="2" fill="#60a5fa"/><line x1="10" y1="12" x2="14" y2="8" stroke="#93c5fd" stroke-width="1.5"/><line x1="10" y1="12" x2="14" y2="16" stroke="#93c5fd" stroke-width="1.5"/></svg>
         <span class="logo-text">论文图表工具</span>
       </div>
       <div class="mode-tabs">
-        <button class="mode-tab" :class="{active: appMode==='er'}" @click="appMode='er'">📊 ER图</button>
-        <button class="mode-tab" :class="{active: appMode==='usecase'}" @click="appMode='usecase'">👤 用例图</button>
-        <button class="mode-tab" :class="{active: appMode==='class'}" @click="appMode='class'">🏷 类图</button>
-        <button class="mode-tab" :class="{active: appMode==='sequence'}" @click="appMode='sequence'">⏱ 时序图</button>
-        <button class="mode-tab" :class="{active: appMode==='flow'}" @click="appMode='flow'">🔀 流程图</button>
-        <button class="mode-tab" :class="{active: appMode==='deployment'}" @click="appMode='deployment'">🖥 部署图</button>
-        <button class="mode-tab" :class="{active: appMode==='architecture'}" @click="appMode='architecture'">🏗 架构图</button>
-        <button class="mode-tab" :class="{active: appMode==='function'}" @click="appMode='function'">🧱 功能结构图</button>
+        <button class="mode-tab" :class="{active: appMode==='er'}" @click="appMode='er'">ER图</button>
+        <button class="mode-tab" :class="{active: appMode==='usecase'}" @click="appMode='usecase'">用例图</button>
+        <button class="mode-tab" :class="{active: appMode==='class'}" @click="appMode='class'">类图</button>
+        <button class="mode-tab" :class="{active: appMode==='sequence'}" @click="appMode='sequence'">时序图</button>
+        <button class="mode-tab" :class="{active: appMode==='flow'}" @click="appMode='flow'">流程图</button>
+        <button class="mode-tab" :class="{active: appMode==='deployment'}" @click="appMode='deployment'">部署图</button>
+        <button class="mode-tab" :class="{active: appMode==='architecture'}" @click="appMode='architecture'">架构图</button>
+        <button class="mode-tab" :class="{active: appMode==='function'}" @click="appMode='function'">功能结构图</button>
       </div>
-      <div class="header-stats" v-if="parsed && appMode==='er'">
-        <span class="stat-badge">{{ tableCount }} 张表</span>
-        <span class="stat-badge">{{ relCount }} 个关联</span>
+      <div class="header-right">
+        <div class="header-stats" v-if="parsed && appMode==='er'">
+          <span class="stat-badge">{{ tableCount }} 张表</span>
+          <span class="stat-badge">{{ relCount }} 个关联</span>
+        </div>
+        <!-- 主题切换器 -->
+        <div class="theme-switcher" @click.stop>
+          <button class="btn-theme" @click="showThemePanel=!showThemePanel" title="切换配色主题">
+            <span class="theme-dot-preview" :style="{background: currentTheme.entityStroke}"></span>
+            <span>{{ currentTheme.name }}</span>
+          </button>
+          <div class="dropdown-panel theme-panel" v-if="showThemePanel">
+            <div
+              v-for="(theme, key) in THEMES" :key="key"
+              class="theme-item" :class="{active: currentThemeName===key}"
+              @click="currentThemeName=key; showThemePanel=false">
+              <span class="theme-dot" :style="{background: theme.entityStroke, border: key==='classic'?'1px solid #ccc':'none'}"></span>
+              <span>{{ theme.name }}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -309,6 +371,9 @@ function closeAll() {
               <span>☁</span>
             </button>
             <input type="file" ref="fileInput" accept=".sql,.txt,.SQL" style="display:none" @change="onFileUpload"/>
+            <button class="btn-ai" @click="showErAiPanel = !showErAiPanel">
+              <span>✦</span> AI生成
+            </button>
             <button class="btn-ai" @click="aiDetectRelations" :disabled="!parsed">
               <span>✦</span> AI识别关联
             </button>
@@ -320,6 +385,52 @@ function closeAll() {
             </button>
           </div>
         </div>
+
+        <div v-if="showErAiPanel" class="er-ai-panel" @click.stop>
+          <div class="er-ai-header">
+            <span class="er-ai-title">AI 智能生成建表 SQL</span>
+            <div style="display:flex;gap:4px;">
+              <button class="btn-icon" @click="showErAiConfig = !showErAiConfig" title="模型配置">⚙</button>
+              <button class="btn-icon" @click="showErAiPanel = false">✕</button>
+            </div>
+          </div>
+          <div v-if="showErAiConfig" class="er-ai-config">
+            <div class="er-ai-config-row">
+              <label>模型预设</label>
+              <select :value="erAiSettings.presetId" @change="changeErAiPreset($event.target.value)">
+                <option v-for="preset in AI_PRESETS" :key="preset.id" :value="preset.id">{{ preset.name }}</option>
+              </select>
+            </div>
+            <div class="er-ai-config-row">
+              <label>模型</label>
+              <select v-if="erAiSettings.presetId === 'longcat'" v-model="erAiSettings.model">
+                <option v-for="m in LONGCAT_MODELS" :key="m.id" :value="m.id">{{ m.name }}{{ m.recommended ? ' ★' : '' }}</option>
+              </select>
+              <input v-else v-model="erAiSettings.model" placeholder="模型名称" />
+            </div>
+            <div class="er-ai-config-row">
+              <label>API Key</label>
+              <input v-model="erAiSettings.apiKey" type="password" placeholder="只保存在浏览器本地" />
+            </div>
+            <div v-if="erAiSettings.presetId === 'custom'" class="er-ai-config-row">
+              <label>API地址</label>
+              <input v-model="erAiSettings.baseUrl" placeholder="https://api.example.com" />
+            </div>
+            <div v-if="erAiSettings.presetId === 'custom'" class="er-ai-config-row">
+              <label>接口路径</label>
+              <input v-model="erAiSettings.endpointPath" placeholder="/v1/chat/completions" />
+            </div>
+            <button class="btn-gen" style="margin-top:6px;width:100%;" @click="saveErAiConfig">保存配置</button>
+          </div>
+          <textarea v-model="erAiPrompt" class="er-ai-textarea" rows="4" placeholder="描述你的系统，例如：失物招领系统，包含用户、失物信息、物品分类等表..."></textarea>
+          <div class="er-ai-footer">
+            <span class="er-ai-hint">AI 会生成 MySQL 建表 SQL，自动解析为 ER 图。</span>
+            <button class="btn-gen" @click="erAiGenerate" :disabled="erAiLoading">
+              {{ erAiLoading ? '生成中...' : '开始生成' }}
+            </button>
+          </div>
+        </div>
+
         <textarea
           v-model="sqlInput"
           class="sql-editor"
@@ -430,6 +541,26 @@ function closeAll() {
       </div>
     </div>
 
+    <!-- 底部状态栏 -->
+    <footer class="status-bar" v-if="appMode==='er'">
+      <div class="status-left">
+        <span class="status-item" v-if="parsed">
+          <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="2" stroke="#64748b" stroke-width="1" fill="none"/></svg>
+          {{ tableCount }} 张表
+        </span>
+        <span class="status-item" v-if="parsed">
+          <svg width="12" height="12" viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6" stroke="#64748b" stroke-width="1"/><circle cx="2" cy="6" r="1.5" fill="#64748b"/><circle cx="10" cy="6" r="1.5" fill="#64748b"/></svg>
+          {{ relCount }} 个关联
+        </span>
+        <span class="status-item" v-if="parsed">
+          主题: {{ currentTheme.name }}
+        </span>
+      </div>
+      <div class="status-right">
+        <span class="status-item">滚轮缩放 · 拖拽平移 · 双击编辑</span>
+      </div>
+    </footer>
+
     <!-- Toast通知 -->
     <transition name="toast">
       <div v-if="toast.show" class="toast" :class="'toast-'+toast.type">
@@ -469,8 +600,29 @@ body { font-family: 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-s
 }
 .mode-tab:hover { color: #334155; }
 .mode-tab.active { background: #fff; color: #3b82f6; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-.header-stats { display: flex; gap: 8px; }
-.stat-badge { padding: 3px 10px; border-radius: 20px; font-size: 12px; background: #eff6ff; color: #3b82f6; font-weight: 500; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.header-stats { display: flex; gap: 6px; }
+.stat-badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; background: #eff6ff; color: #3b82f6; font-weight: 600; }
+.theme-switcher { position: relative; }
+.btn-theme {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border: 1px solid #e2e8f0; border-radius: 8px;
+  background: #fff; font-size: 12px; cursor: pointer; color: #475569;
+  transition: all 0.15s;
+}
+.btn-theme:hover { background: #f1f5f9; border-color: #cbd5e1; }
+.theme-dot-preview { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.logo-icon-svg { flex-shrink: 0; }
+
+/* 底部状态栏 */
+.status-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 16px; min-height: 28px; flex-shrink: 0;
+  background: #fff; border-top: 1px solid #e2e8f0;
+  font-size: 11px; color: #94a3b8;
+}
+.status-left, .status-right { display: flex; align-items: center; gap: 14px; }
+.status-item { display: flex; align-items: center; gap: 4px; }
 
 /* ── 主体 ── */
 .main { display: flex; flex: 1; overflow: hidden; min-height: 0; }
@@ -627,6 +779,36 @@ body { font-family: 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-s
 .toast-error { background: #ef4444; color: #fff; }
 .toast-enter-active, .toast-leave-active { transition: all 0.3s; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateX(-50%) translateY(16px); }
+
+/* ── ER AI 面板 ── */
+.er-ai-panel {
+  padding: 10px 14px; border-bottom: 1px solid #e2e8f0; background: #faf5ff; flex-shrink: 0;
+}
+.er-ai-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+}
+.er-ai-title { font-size: 13px; font-weight: 600; color: #7c3aed; }
+.btn-icon {
+  width: 26px; height: 26px; border: none; background: transparent; cursor: pointer;
+  font-size: 14px; border-radius: 4px; color: #64748b; display: flex; align-items: center; justify-content: center;
+}
+.btn-icon:hover { background: #f1f5f9; }
+.er-ai-config { margin-bottom: 8px; }
+.er-ai-config-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px;
+}
+.er-ai-config-row label { width: 60px; color: #64748b; flex-shrink: 0; }
+.er-ai-config-row input, .er-ai-config-row select {
+  flex: 1; padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 5px; font-size: 12px;
+}
+.er-ai-textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 6px;
+  font-size: 12px; line-height: 1.5; resize: vertical; font-family: inherit;
+}
+.er-ai-footer {
+  display: flex; align-items: center; justify-content: space-between; margin-top: 8px; gap: 8px;
+}
+.er-ai-hint { font-size: 11px; color: #94a3b8; }
 
 /* ── 图标 ── */
 .icon { font-size: 16px; }
