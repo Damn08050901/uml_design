@@ -7,6 +7,7 @@ import { detectRelations } from '../utils/aiRelation.js'
 import { autoFillComments } from '../utils/autoTranslate.js'
 import {
   AI_PRESETS,
+  LONGCAT_MODELS,
   applyAiPreset,
   generateDiagramSpecWithAi,
   loadDiagramAiSettings,
@@ -405,20 +406,23 @@ async function exportDiagram(type) {
             </select>
           </div>
           <div class="ai-config-row">
-            <label>API地址</label>
-            <input v-model="aiSettings.baseUrl" placeholder="https://api.longcat.chat/openai" />
-          </div>
-          <div class="ai-config-row">
-            <label>接口路径</label>
-            <input v-model="aiSettings.endpointPath" placeholder="/chat/completions" />
+            <label>模型</label>
+            <select v-if="aiSettings.presetId === 'longcat'" v-model="aiSettings.model">
+              <option v-for="m in LONGCAT_MODELS" :key="m.id" :value="m.id">{{ m.name }}{{ m.recommended ? ' ★' : '' }}</option>
+            </select>
+            <input v-else v-model="aiSettings.model" placeholder="模型名称" />
           </div>
           <div class="ai-config-row">
             <label>API Key</label>
             <input v-model="aiSettings.apiKey" type="password" placeholder="只保存在浏览器本地" />
           </div>
-          <div class="ai-config-row">
-            <label>模型</label>
-            <input v-model="aiSettings.model" placeholder="glm-4.7 / LongCat-Flash-Thinking" />
+          <div v-if="aiSettings.presetId === 'custom'" class="ai-config-row">
+            <label>API地址</label>
+            <input v-model="aiSettings.baseUrl" placeholder="https://api.example.com" />
+          </div>
+          <div v-if="aiSettings.presetId === 'custom'" class="ai-config-row">
+            <label>接口路径</label>
+            <input v-model="aiSettings.endpointPath" placeholder="/v1/chat/completions" />
           </div>
           <button class="btn-sm btn-primary" @click="saveAiConfig">保存配置</button>
         </div>

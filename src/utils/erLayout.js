@@ -1,7 +1,64 @@
 /**
- * ER图布局算法 v2：对标sql.cengxuyuan.cn
- * 实体网格分布，属性围绕实体放射排列，不重叠
+ * ER图布局算法 v3：图感知网格布局
+ * - BFS 排序：从关联最多的表开始，相关表优先排列
+ * - 中心外扩网格：hub 表放中心，邻居放周围，减少长线交叉
+ * - 属性围绕实体放射排列
  */
+
+// BFS排序：关联最多的表最先，其邻居紧跟其后
+function graphAwareOrder(tables, relationships) {
+  const n = tables.length
+  if (n <= 2) return tables
+
+  const adj = new Map()
+  for (const t of tables) adj.set(t.name, [])
+  for (const r of (relationships || [])) {
+    if (adj.has(r.from) && adj.has(r.to)) {
+      adj.get(r.from).push(r.to)
+      adj.get(r.to).push(r.from)
+    }
+  }
+
+  const byDegree = [...tables].sort((a, b) =>
+    (adj.get(b.name)?.length || 0) - (adj.get(a.name)?.length || 0))
+
+  const ordered = []
+  const visited = new Set()
+
+  for (const start of byDegree) {
+    if (visited.has(start.name)) continue
+    const queue = [start]
+    visited.add(start.name)
+    while (queue.length > 0) {
+      const cur = queue.shift()
+      ordered.push(cur)
+      const neighbors = (adj.get(cur.name) || [])
+        .filter(name => !visited.has(name))
+        .sort((a, b) => (adj.get(b)?.length || 0) - (adj.get(a)?.length || 0))
+      for (const name of neighbors) {
+        visited.add(name)
+        const t = tables.find(tb => tb.name === name)
+        if (t) queue.push(t)
+      }
+    }
+  }
+
+  return ordered
+}
+
+// 中心外扩网格位置：(0,0)=中心，依次向外扩展
+function centerOutPositions(cols, rows, n) {
+  const cx = (cols - 1) / 2
+  const cy = (rows - 1) / 2
+  const all = []
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      all.push({ col: c, row: r, dist: Math.hypot(c - cx, r - cy) })
+    }
+  }
+  all.sort((a, b) => a.dist - b.dist)
+  return all.slice(0, n)
+}
 
 export function layoutAll(tables, relationships) {
   const nodes = []
@@ -9,20 +66,21 @@ export function layoutAll(tables, relationships) {
   const n = tables.length
   if (n === 0) return { nodes, edges }
 
-  // 实体网格位置计算
+  const ordered = graphAwareOrder(tables, relationships)
   const cols = Math.ceil(Math.sqrt(n))
   const rows = Math.ceil(n / cols)
+  const positions = centerOutPositions(cols, rows, n)
+
   const spacingX = 450
   const spacingY = 420
   const startX = 300
   const startY = 250
 
   for (let i = 0; i < n; i++) {
-    const t = tables[i]
-    const col = i % cols
-    const row = Math.floor(i / cols)
-    const cx = startX + col * spacingX
-    const cy = startY + row * spacingY
+    const t = ordered[i]
+    const pos = positions[i]
+    const cx = startX + pos.col * spacingX
+    const cy = startY + pos.row * spacingY
 
     // 实体节点
     nodes.push({

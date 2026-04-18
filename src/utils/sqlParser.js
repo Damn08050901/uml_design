@@ -1,3 +1,5 @@
+import { inferComment, inferTableComment } from './autoTranslate.js'
+
 /**
  * SQL解析器 v2：完整支持Navicat导出的MySQL语法
  * 支持：CHARACTER SET、COLLATE、USING BTREE、ON UPDATE、DEFAULT NULL等
@@ -23,6 +25,18 @@ export function parseSQL(sql) {
     // 从尾部提取COMMENT
     const cm = tail.match(/COMMENT\s*=\s*'([^']*)'/i)
     if (cm) t.comment = cm[1]
+    // 自动推断缺失的表注释
+    if (!t.comment) {
+      const inferred = inferTableComment(name)
+      if (inferred) t.comment = inferred
+    }
+    // 自动推断缺失的字段注释
+    for (const col of t.columns) {
+      if (!col.comment) {
+        const inferred = inferComment(col.name)
+        if (inferred) col.comment = inferred
+      }
+    }
     tables.push(t)
   }
 

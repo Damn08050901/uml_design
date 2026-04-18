@@ -64,9 +64,12 @@ function measureHeight(table, showAttrs) {
 async function layoutTables(nodes, edges) {
   if (nodes.length === 0) return { width: 1200, height: 900, nodes: new Map() }
   try {
+    // Use stress algorithm for ER diagrams: it places connected tables closer
+    // and naturally minimizes edge crossings for non-hierarchical graphs
+    const isSmall = nodes.length <= 3
     const graph = {
       id: 'root',
-      layoutOptions: {
+      layoutOptions: isSmall ? {
         'elk.algorithm': 'layered',
         'elk.direction': 'RIGHT',
         'elk.edgeRouting': 'ORTHOGONAL',
@@ -75,6 +78,14 @@ async function layoutTables(nodes, edges) {
         'elk.layered.spacing.nodeNodeBetweenLayers': '140',
         'elk.spacing.componentComponent': '110',
         'elk.separateConnectedComponents': 'true'
+      } : {
+        'elk.algorithm': 'stress',
+        'elk.padding': '[left=80, top=80, right=80, bottom=80]',
+        'elk.spacing.nodeNode': '120',
+        'elk.spacing.componentComponent': '130',
+        'elk.separateConnectedComponents': 'true',
+        'elk.stress.desiredEdgeLength': '280',
+        'elk.stress.epsilon': '0.001'
       },
       children: nodes.map(node => ({
         id: node.id,
