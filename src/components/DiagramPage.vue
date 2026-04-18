@@ -5,6 +5,7 @@ import UmlCanvas from './UmlCanvas.vue'
 import { UML_TEMPLATES } from '../utils/diagramTemplates.js'
 import {
   AI_PRESETS,
+  LONGCAT_MODELS,
   applyAiPreset,
   generateDiagramSpecWithAi,
   loadDiagramAiSettings,
@@ -41,6 +42,7 @@ const aiPrompt = ref('')
 const aiLoading = ref(false)
 const aiSettings = ref(loadDiagramAiSettings())
 let buildDiagramLayoutFn = null
+let buildDiagramDrawioXmlFn = null
 
 function showToast(msg, type = 'success') {
   toast.value = { show: true, msg, type }
@@ -168,6 +170,10 @@ function convertPngDataUrlToJpeg(dataUrl) {
 
 async function exportDiagram(type) {
   showExportMenu.value = false
+  if (type === 'drawio' || type === 'drawio-open') {
+    await exportDrawio(type === 'drawio-open')
+    return
+  }
   if (!canvasRef.value) { showToast('画布尚未准备好', 'warn'); return }
   try {
     if (type === 'svg') {
@@ -185,6 +191,45 @@ async function exportDiagram(type) {
     showToast('已导出 PNG')
   } catch (error) {
     showToast(`导出失败: ${error.message}`, 'error')
+  }
+}
+
+async function exportDrawio(openInBrowser = false) {
+  if (!spec.value.trim()) { showToast('请先输入图定义', 'warn'); return }
+  try {
+    if (!buildDiagramDrawioXmlFn) {
+      const mod = await import('../utils/umlDrawioBuilder.js')
+      buildDiagramDrawioXmlFn = mod.buildDiagramDrawioXml
+    }
+    const title = captionTitle.value.trim() || props.defaultCaptionTitle
+    const xml = await buildDiagramDrawioXmlFn(props.diagramType, spec.value, title)
+    if (openInBrowser) {
+      const utf8 = new TextEncoder().encode(xml)
+      const cs = new CompressionStream('deflate-raw')
+      const writer = cs.writable.getWriter()
+      writer.write(utf8)
+      writer.close()
+      const reader = cs.readable.getReader()
+      const chunks = []
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+      }
+      const total = chunks.reduce((s, c) => s + c.length, 0)
+      const buf = new Uint8Array(total)
+      let off = 0
+      for (const c of chunks) { buf.set(c, off); off += c.length }
+      const b64 = btoa(String.fromCharCode(...buf))
+      const encoded = encodeURIComponent(b64)
+      window.open(`https://app.diagrams.net/#R${encoded}`, '_blank')
+      showToast('已在 draw.io 中打开')
+    } else {
+      saveAs(new Blob([xml], { type: 'application/xml' }), `${exportBaseName()}.drawio`)
+      showToast('已导出 .drawio 文件')
+    }
+  } catch (error) {
+    showToast(`draw.io 导出失败: ${error.message}`, 'error')
   }
 }
 
@@ -256,20 +301,23 @@ watch(() => props.diagramType, async () => {
             </select>
           </div>
           <div class="ai-config-row">
-            <label>API地址</label>
-            <input v-model="aiSettings.baseUrl" placeholder="https://api.longcat.chat/openai" />
-          </div>
-          <div class="ai-config-row">
-            <label>接口路径</label>
-            <input v-model="aiSettings.endpointPath" placeholder="/chat/completions" />
+            <label>模型</label>
+            <select v-if="aiSettings.presetId === 'longcat'" v-model="aiSettings.model">
+              <option v-for="m in LONGCAT_MODELS" :key="m.id" :value="m.id">{{ m.name }}{{ m.recommended ? ' ★' : '' }}</option>
+            </select>
+            <input v-else v-model="aiSettings.model" placeholder="模型名称" />
           </div>
           <div class="ai-config-row">
             <label>API Key</label>
             <input v-model="aiSettings.apiKey" type="password" placeholder="只保存在浏览器本地" />
           </div>
-          <div class="ai-config-row">
-            <label>模型</label>
-            <input v-model="aiSettings.model" placeholder="LongCat-Flash-Thinking" />
+          <div v-if="aiSettings.presetId === 'custom'" class="ai-config-row">
+            <label>API地址</label>
+            <input v-model="aiSettings.baseUrl" placeholder="https://api.example.com" />
+          </div>
+          <div v-if="aiSettings.presetId === 'custom'" class="ai-config-row">
+            <label>接口路径</label>
+            <input v-model="aiSettings.endpointPath" placeholder="/v1/chat/completions" />
           </div>
           <div class="ai-config-row">
             <label>温度</label>
@@ -312,6 +360,9 @@ watch(() => props.diagramType, async () => {
               <div class="export-item" @click="exportDiagram('png')">PNG</div>
               <div class="export-item" @click="exportDiagram('jpeg')">JPG</div>
               <div class="export-item" @click="exportDiagram('svg')">SVG</div>
+              <div class="export-item-divider"></div>
+              <div class="export-item" @click="exportDiagram('drawio')">下载 .drawio</div>
+              <div class="export-item" @click="exportDiagram('drawio-open')">在 draw.io 中打开</div>
             </div>
           </div>
         </div>
@@ -322,7 +373,10 @@ watch(() => props.diagramType, async () => {
       </div>
 
       <div class="diagram-canvas">
-        <div v-if="renderError" class="render-error">{{ renderError }}</div>
+        <div v-if="renderError" class="render-error">
+          <svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="none" stroke="#ef4444" stroke-width="1.5"/><line x1="7" y1="7" x2="13" y2="13" stroke="#ef4444" stroke-width="1.5"/><line x1="13" y1="7" x2="7" y2="13" stroke="#ef4444" stroke-width="1.5"/></svg>
+          {{ renderError }}
+        </div>
         <UmlCanvas
           v-else-if="layoutData"
           :key="layoutRevision"
@@ -333,7 +387,15 @@ watch(() => props.diagramType, async () => {
           :height="layoutData.height"
           @ready="handleCanvasReady"
         />
-        <div v-else class="placeholder">请输入内容并应用到画布</div>
+        <div v-else class="placeholder">
+          <svg width="40" height="40" viewBox="0 0 40 40" opacity="0.3">
+            <rect x="4" y="4" width="32" height="32" rx="6" stroke="#94a3b8" stroke-width="2" fill="none"/>
+            <circle cx="14" cy="20" r="3" fill="#94a3b8"/><circle cx="26" cy="14" r="3" fill="#94a3b8"/>
+            <circle cx="26" cy="26" r="3" fill="#94a3b8"/><line x1="17" y1="20" x2="23" y2="14" stroke="#94a3b8" stroke-width="1.5"/>
+            <line x1="17" y1="20" x2="23" y2="26" stroke="#94a3b8" stroke-width="1.5"/>
+          </svg>
+          <span style="margin-top:8px">请输入内容并应用到画布</span>
+        </div>
       </div>
     </div>
 
@@ -574,22 +636,25 @@ watch(() => props.diagramType, async () => {
   cursor: pointer;
 }
 .export-item:hover { background: #f8fafc; }
+.export-item-divider { height: 1px; background: #e2e8f0; margin: 2px 0; }
 .export-divider { height: 1px; background: #e2e8f0; }
 
 .diagram-canvas {
   flex: 1;
   min-height: 0;
-  background: #f1f5f9;
+  background: #f8fafc;
 }
 .render-error, .placeholder {
   height: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #64748b;
-  font-size: 14px;
+  color: #94a3b8;
+  font-size: 13px;
+  gap: 4px;
 }
-.render-error { color: #b91c1c; }
+.render-error { color: #ef4444; flex-direction: row; gap: 8px; }
 
 .toast {
   position: fixed;

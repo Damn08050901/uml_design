@@ -70,7 +70,9 @@
       <!-- 用例椭圆 -->
       <g v-for="n in ucNodes" :key="n.id"
         :transform="`translate(${n.x},${n.y})`"
-        @mousedown.stop="onDragStart($event,n)" style="cursor:move">
+        @mousedown.stop="onDragStart($event,n)"
+        @mouseenter="hoverUc = n.id" @mouseleave="hoverUc = null"
+        style="cursor:move">
         <ellipse :rx="n.rx" :ry="n.ry"
           :fill="ucFill(n)" :stroke="ucStroke(n)" stroke-width="1.5"/>
         <text text-anchor="middle" :font-size="fontSize" :fill="theme.ucText||'#333'">
@@ -83,6 +85,17 @@
             {{ line }}
           </tspan>
         </text>
+        <g v-if="hoverUc === n.id" class="uc-resize-handles">
+          <rect :x="n.rx - 4" :y="-4" width="8" height="8"
+            fill="#fff" stroke="#3b82f6" stroke-width="1.2" style="cursor:e-resize"
+            @mousedown.stop="onResizeStart($event, n, 'rx')"/>
+          <rect :x="-4" :y="n.ry - 4" width="8" height="8"
+            fill="#fff" stroke="#3b82f6" stroke-width="1.2" style="cursor:s-resize"
+            @mousedown.stop="onResizeStart($event, n, 'ry')"/>
+          <rect :x="n.rx - 4" :y="n.ry - 4" width="8" height="8"
+            fill="#fff" stroke="#3b82f6" stroke-width="1.2" style="cursor:se-resize"
+            @mousedown.stop="onResizeStart($event, n, 'both')"/>
+        </g>
       </g>
 
       <!-- Actor火柴人 -->
@@ -283,11 +296,14 @@ function onKeydown(e) {
   if (e.key === 'Escape' && isFullscreen.value) isFullscreen.value = false
 }
 
-onMounted(() => {
+onMounted(async () => {
   updateSize()
   fitView()
   window.addEventListener('resize', updateSize)
   document.addEventListener('keydown', onKeydown)
+  await nextTick()
+  updateSize()
+  fitView()
   emit('ready')
 })
 
@@ -344,22 +360,51 @@ async function exportPngDataUrl(scale = 2) {
 defineExpose({ svgEl, exportSvgString, exportPngDataUrl })
 
 // ─── 拖拽节点 ───
+const hoverUc = ref(null)
 let dragging = null
 let panning = false
 let lastPan = { x: 0, y: 0 }
+let resizing = null
+const MIN_RX = 30
+const MIN_RY = 16
 
 function onDragStart(e, node) {
   dragging = { node, sx: e.clientX, sy: e.clientY, ox: node.x, oy: node.y }
 }
 
+function onResizeStart(e, node, mode) {
+  const rect = svgEl.value.getBoundingClientRect()
+  resizing = {
+    node,
+    mode,
+    sx: e.clientX,
+    sy: e.clientY,
+    orx: node.rx,
+    ory: node.ry,
+    scaleX: vb.value.w / rect.width,
+    scaleY: vb.value.h / rect.height
+  }
+}
+
 function onPanStart(e) {
-  if (!dragging) {
+  if (!dragging && !resizing) {
     panning = true
     lastPan = { x: e.clientX, y: e.clientY }
   }
 }
 
 function onMove(e) {
+  if (resizing) {
+    const dx = (e.clientX - resizing.sx) * resizing.scaleX
+    const dy = (e.clientY - resizing.sy) * resizing.scaleY
+    if (resizing.mode === 'rx' || resizing.mode === 'both') {
+      resizing.node.rx = Math.max(MIN_RX, resizing.orx + dx)
+    }
+    if (resizing.mode === 'ry' || resizing.mode === 'both') {
+      resizing.node.ry = Math.max(MIN_RY, resizing.ory + dy)
+    }
+    return
+  }
   if (dragging) {
     const rect = svgEl.value.getBoundingClientRect()
     const scaleX = vb.value.w / rect.width
@@ -379,6 +424,7 @@ function onMove(e) {
 function onEnd() {
   dragging = null
   panning = false
+  resizing = null
 }
 </script>
 
@@ -409,4 +455,6 @@ function onEnd() {
   color: #333; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 .zoom-btn:hover { background: #f3f4f6; border-color: #9ca3af; }
+.uc-resize-handles rect { opacity: 0.7; transition: opacity 0.15s; }
+.uc-resize-handles rect:hover { opacity: 1; }
 </style>

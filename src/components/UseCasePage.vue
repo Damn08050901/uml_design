@@ -1,9 +1,10 @@
 <script setup>
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, nextTick } from 'vue'
 import { saveAs } from 'file-saver'
 import UseCaseDiagram from './UseCaseDiagram.vue'
 import {
   AI_PRESETS,
+  LONGCAT_MODELS,
   applyAiPreset,
   loadDiagramAiSettings,
   requestAiChatCompletion,
@@ -168,7 +169,7 @@ function removeRelation(index) {
   extraRelations.value.splice(index, 1)
 }
 
-function parseText() {
+async function parseText() {
   const text = parseInput.value.trim()
   if (!text) {
     showToast('请输入内容', 'warn')
@@ -223,7 +224,17 @@ function parseText() {
   actors.value = newActors
   extraRelations.value = []
   showParsePanel.value = false
+  await nextTick()
+  await applyToCanvas()
   showToast(`解析成功，识别到 ${newActors.length} 个参与者`)
+}
+
+async function smartApply() {
+  if (showParsePanel.value && parseInput.value.trim()) {
+    await parseText()
+  } else {
+    await applyToCanvas()
+  }
 }
 
 function saveAiConfig() {
@@ -264,6 +275,16 @@ JSON格式：
 
 type 只能是 main、include、extend、association、generalization。`
 
+function extractJSON(raw) {
+  let text = String(raw || '').trim()
+  text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (fenced) text = fenced[1].trim()
+  const braceMatch = text.match(/\{[\s\S]*\}/)
+  if (braceMatch) text = braceMatch[0]
+  return JSON.parse(text)
+}
+
 async function aiGenerate() {
   if (!aiPrompt.value.trim()) {
     showToast('请输入系统描述', 'warn')
@@ -271,29 +292,32 @@ async function aiGenerate() {
   }
   aiLoading.value = true
   try {
-    const data = await requestAiChatCompletion({
-      settings: aiSettings.value,
-      body: {
-        model: aiSettings.value.model,
-        temperature: typeof aiSettings.value.temperature === 'number' ? aiSettings.value.temperature : 0.3,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: AI_SYSTEM_PROMPT },
-          { role: 'user', content: aiPrompt.value }
-        ]
-      }
-    })
+    const isThinking = /thinking/i.test(aiSettings.value.model)
+    const body = {
+      model: aiSettings.value.model,
+      temperature: typeof aiSettings.value.temperature === 'number' ? aiSettings.value.temperature : (isThinking ? 0.6 : 0.3),
+      messages: [
+        { role: 'system', content: AI_SYSTEM_PROMPT },
+        { role: 'user', content: aiPrompt.value }
+      ]
+    }
+    if (!isThinking) {
+      body.response_format = { type: 'json_object' }
+    }
+
+    const data = await requestAiChatCompletion({ settings: aiSettings.value, body })
 
     const content = data?.choices?.[0]?.message?.content
     if (!content) throw new Error('AI 返回内容为空')
 
-    const result = JSON.parse(content)
+    const result = extractJSON(content)
     if (!Array.isArray(result.actors)) throw new Error('返回格式不正确，缺少 actors 数组')
 
     actors.value = result.actors
     extraRelations.value = Array.isArray(result.relations) ? result.relations : []
     saveDiagramAiSettings(aiSettings.value)
     showAiPanel.value = false
+    await nextTick()
     await applyToCanvas()
     showToast(`AI 生成成功，识别到 ${result.actors.length} 个参与者`)
   } catch (error) {
@@ -406,7 +430,7 @@ onMounted(() => {
           <button class="btn-sm" :class="thesisStyle ? 'btn-thesis-active' : ''" @click="thesisStyle = !thesisStyle">{{ thesisStyle ? '论文风格' : '彩色风格' }}</button>
           <button class="btn-sm btn-parse" @click="showParsePanel = !showParsePanel; showAiPanel = false">粘贴生成</button>
           <button class="btn-sm btn-ai" @click="showAiPanel = !showAiPanel; showParsePanel = false">AI生成</button>
-          <button class="btn-sm btn-primary" @click="applyToCanvas">应用到画布</button>
+          <button class="btn-sm btn-primary" @click="smartApply">应用到画布</button>
           <button class="btn-sm" @click="exportJSON">导出JSON</button>
           <button class="btn-sm" @click="importJSON">导入JSON</button>
           <input ref="jsonFileInput" type="file" accept=".json" style="display:none" @change="onJSONImport" />
@@ -469,20 +493,23 @@ onMounted(() => {
               </select>
             </div>
             <div class="ai-config-row">
-              <label>API地址</label>
-              <input v-model="aiSettings.baseUrl" placeholder="https://api.longcat.chat/openai" />
-            </div>
-            <div class="ai-config-row">
-              <label>接口路径</label>
-              <input v-model="aiSettings.endpointPath" placeholder="/chat/completions" />
+              <label>模型</label>
+              <select v-if="aiSettings.presetId === 'longcat'" v-model="aiSettings.model">
+                <option v-for="m in LONGCAT_MODELS" :key="m.id" :value="m.id">{{ m.name }}{{ m.recommended ? ' ★' : '' }}</option>
+              </select>
+              <input v-else v-model="aiSettings.model" placeholder="模型名称" />
             </div>
             <div class="ai-config-row">
               <label>API Key</label>
               <input v-model="aiSettings.apiKey" type="password" placeholder="只保存在浏览器本地" />
             </div>
-            <div class="ai-config-row">
-              <label>模型</label>
-              <input v-model="aiSettings.model" placeholder="LongCat-Flash-Thinking / glm-4.7" />
+            <div v-if="aiSettings.presetId === 'custom'" class="ai-config-row">
+              <label>API地址</label>
+              <input v-model="aiSettings.baseUrl" placeholder="https://api.example.com" />
+            </div>
+            <div v-if="aiSettings.presetId === 'custom'" class="ai-config-row">
+              <label>接口路径</label>
+              <input v-model="aiSettings.endpointPath" placeholder="/v1/chat/completions" />
             </div>
             <button class="btn-sm btn-primary" @click="saveAiConfig">保存配置</button>
           </div>
